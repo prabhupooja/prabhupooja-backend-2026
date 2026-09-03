@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"
+    integrity="sha512-Kc323vGBEqzTmouAECnVceyQqyqdsSiqLQISBL29aUW4U/M7pSPA/gEUZQqv1cwx4OnYxTxve5UMg5GT6L4JJg=="
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  />
+    <title>Twilio Video Test</title>
+    <style>
+      #video-container {
+        height: 50vh;
+        border: 1px solid #f5aa48;
+        border-radius: 5px;
+        margin-left: 5px;
+        margin-right: 5px;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-around;
+        align-items: center;
+      }
+      #video-container video {
+        width: 100%;
+        object-fit: cover;
+        border-radius: 10px;
+      }
+      #controls {
+        display: flex;
+        flex-direction: row;
+        justify-content: center;
+        margin-top: 20px;
+      }
+      .control-button {
+        background-color: #ff4800;
+        border: none;
+        color: white;
+        padding: 10px 20px;
+        margin: 0 10px;
+        border-radius: 100px;
+        cursor: pointer;
+      }
+      .cameraicon {
+        font-size: 20px;
+        color: #fff;
+      }
+      .control-button:disabled {
+        background-color: #6c757d;
+        cursor: not-allowed;
+      }
+    </style>
+    <script src="https://media.twiliocdn.com/sdk/js/video/releases/2.18.0/twilio-video.min.js"></script>
+</head>
+<body>
+    <div id="video-container">
+        <h1>Welcome to Prabhu Pooja</h1>
+    </div>
+    <div id="controls">
+      <button id="toggle-microphone" class="control-button"><i class="fa fa-microphone fa-icon"></i></button>
+      <button id="toggle-camera" class="control-button"><i class="fa fa-video-camera fa-icon"></i></button>
+      <button id="toggle-camera-source" class="control-button"><i class="fa fa-solid fa-camera fa-icon"></i></button>
+  </div>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        const roomName = urlParams.get('room');
+
+        function sendLogToReactNative(message) {
+            window.ReactNativeWebView.postMessage(message);
+        }
+
+        let room;
+        let localAudioTrack;
+        let localVideoTrack;
+        let participants = [];
+
+        const videoContainer = document.getElementById('video-container');  // Define videoContainer
+
+        function attachTrack(track) {
+            if (track.kind === 'video') {
+                const videoElement = track.attach();
+                videoElement.style.width = '100%';
+                videoElement.style.height = '100%';
+                videoContainer.appendChild(videoElement);
+            } else if (track.kind === 'audio') {
+                track.attach(); // Attaches audio but does not add to DOM
+            }
+        }
+
+        function attachParticipantTracks(participant) {
+            participant.tracks.forEach(publication => {
+                if (publication.isSubscribed) {
+                    attachTrack(publication.track);
+                }
+            });
+
+            participant.on('trackSubscribed', track => {
+                console.log(`Subscribed to a ${track.kind} track from participant ${participant.identity}`);
+                attachTrack(track);
+            });
+
+            participant.on('trackUnsubscribed', track => {
+                console.log(`Unsubscribed from a ${track.kind} track from participant ${participant.identity}`);
+                track.detach().forEach(element => element.remove());
+            });
+        }
+
+        async function connectToRoom(token, roomName) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                localAudioTrack = new Twilio.Video.LocalAudioTrack(stream.getAudioTracks()[0]);
+                localVideoTrack = new Twilio.Video.LocalVideoTrack(stream.getVideoTracks()[0]);
+
+                room = await Twilio.Video.connect(token, {
+                    name: roomName,
+                    tracks: [localAudioTrack, localVideoTrack],
+                });
+
+                videoContainer.innerHTML = ''; // Clear the initial welcome message
+
+                room.localParticipant.tracks.forEach(publication => {
+                    if (publication.track) {
+                        attachTrack(publication.track);
+                    }
+                });
+
+                room.participants.forEach(participant => {
+                    console.log(`Participant ${participant.identity} connected`);
+                    attachParticipantTracks(participant);
+                });
+
+                room.on('participantConnected', participant => {
+                    console.log(`Participant ${participant.identity} just connected`);
+                    attachParticipantTracks(participant);
+                });
+
+                room.on('participantDisconnected', participant => {
+                    console.log(`Participant ${participant.identity} disconnected`);
+                    participant.tracks.forEach(publication => {
+                        if (publication.track) {
+                            publication.track.detach().forEach(element => element.remove());
+                        }
+                    });
+                });
+
+                document.getElementById('toggle-microphone').addEventListener('click', () => {
+                    if (localAudioTrack) {
+                        if (localAudioTrack.isEnabled) {
+                            localAudioTrack.disable();
+                            document.getElementById('toggle-microphone').innerHTML = '<i class="fa fa-microphone-slash fa-icon"></i>';
+                        } else {
+                            localAudioTrack.enable();
+                            document.getElementById('toggle-microphone').innerHTML = '<i class="fa fa-microphone fa-icon"></i>';
+                        }
+                    }
+                });
+
+                document.getElementById('toggle-camera').addEventListener('click', () => {
+                    if (localVideoTrack) {
+                        if (localVideoTrack.isEnabled) {
+                            localVideoTrack.disable();
+                            document.getElementById('toggle-camera').innerHTML = '<i class="fa fa-video-camera-slash fa-icon"></i>';
+                        } else {
+                            localVideoTrack.enable();
+                            document.getElementById('toggle-camera').innerHTML = '<i class="fa fa-video-camera fa-icon"></i>';
+                        }
+                    }
+                });
+
+                document.getElementById('toggle-camera-source').addEventListener('click', async () => {
+                    if (localVideoTrack) {
+                        const videoDevices = await navigator.mediaDevices.enumerateDevices();
+                        const currentDeviceId = localVideoTrack.mediaStreamTrack.getSettings().deviceId;
+                        const newDevice = videoDevices.find(device => device.kind === 'videoinput' && device.deviceId !== currentDeviceId);
+
+                        if (newDevice) {
+                            const newStream = await navigator.mediaDevices.getUserMedia({
+                                video: { deviceId: newDevice.deviceId }
+                            });
+
+                            const newVideoTrack = new Twilio.Video.LocalVideoTrack(newStream.getVideoTracks()[0]);
+                            room.localParticipant.unpublishTrack(localVideoTrack);
+                            room.localParticipant.publishTrack(newVideoTrack);
+                            localVideoTrack.stop();
+                            localVideoTrack = newVideoTrack;
+
+                            // Reattach new track
+                            attachTrack(localVideoTrack);
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error connecting to Room:', error);
+                alert(`Error connecting to Room: ${error.message}`);
+                sendLogToReactNative(`Error connecting to Room: ${error.message}`)
+            }
+        }
+
+        connectToRoom(token, roomName);
+    </script>
+</body>
+</html>
