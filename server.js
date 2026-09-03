@@ -10,21 +10,37 @@ const path = require("path");
 const fs = require("fs");
 const http = require("http");
 const app = express();
+const server = http.createServer(app);
+
+const securityHeaders = require("./middlewares/securityHeaders");
+const { authLimiter, generalLimiter } = require("./middlewares/rateLimiter");
 const { initializeSocket } = require("./config/soketConfig");
 const passport = require('passport');
 const session = require('express-session');
 require('./config/userLoginWithGoogle'); 
 const admin = require('firebase-admin');
-const serviceAccount = require('./serviceAccountKey.json');
 
-const server = http.createServer(app);
-
-const securityHeaders = require("./middlewares/securityHeaders");
-const { authLimiter, generalLimiter } = require("./middlewares/rateLimiter");
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+// Safe Firebase Admin Initialization (Prevents crash if serviceAccountKey.json is missing on VPS/Server)
+const serviceAccountPath = path.join(__dirname, 'serviceAccountKey.json');
+try {
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = require(serviceAccountPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    console.log("Firebase Admin initialized successfully.");
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    console.log("Firebase Admin initialized via FIREBASE_SERVICE_ACCOUNT env.");
+  } else {
+    console.warn("⚠️ [Warning] serviceAccountKey.json not found. Push notifications will be disabled until configured.");
+  }
+} catch (fcmErr) {
+  console.warn("⚠️ [Warning] Failed to initialize Firebase Admin:", fcmErr.message);
+}
 
 app.use(securityHeaders);
 app.use(cors());

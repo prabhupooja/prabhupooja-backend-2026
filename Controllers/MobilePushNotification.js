@@ -54,6 +54,11 @@ exports.sendNotification = async (req, res) => {
     return res.status(400).json({ error: 'Title and body are required' });
   }
 
+  if (!admin.apps || admin.apps.length === 0) {
+    console.warn("Firebase Admin not initialized. Skipping notification.");
+    return res.status(200).json({ message: 'Firebase not configured, notification skipped', sent: 0 });
+  }
+
   try {
     const responses = [];
 
@@ -81,10 +86,15 @@ exports.sendNotification = async (req, res) => {
 };
 
 exports.sendAutoNotification = async (title, body) => {
-
   if (!title || !body) {
     throw new Error('Title and body are required');
   }
+
+  if (!admin.apps || admin.apps.length === 0) {
+    console.warn("Firebase Admin not initialized. Skipping auto notification.");
+    return { message: 'Firebase not configured', sent: 0 };
+  }
+
   try {
     const responses = [];
 
@@ -113,6 +123,12 @@ exports.sendNotificationToUser = async (title, body, userId) => {
   if (!title || !body || !userId) {
     throw new Error('Title, body, and userId are required');
   }
+
+  if (!admin.apps || admin.apps.length === 0) {
+    console.warn("Firebase Admin not initialized. Skipping user notification.");
+    return { success: false, message: 'Firebase Admin not configured' };
+  }
+
   try {
     const [rows] = await db.query(
       'SELECT deviceToken FROM users WHERE id = ?',
@@ -120,7 +136,7 @@ exports.sendNotificationToUser = async (title, body, userId) => {
     );
 
     if (rows.length === 0 || !rows[0].deviceToken) {
-      throw new Error('Device token not found for this user');
+      return { success: false, message: 'Device token not found for this user' };
     }
 
     const deviceToken = rows[0].deviceToken;
