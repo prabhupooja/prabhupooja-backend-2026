@@ -7,8 +7,7 @@ dotenv.config();
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const apiKey =process.env.TWILIO_API_KEY;
-const apiSecret = process.env.TWILIO_API_SECRET
-const client = twilio(accountSid, authToken);
+const client = (accountSid && authToken) ? twilio(accountSid, authToken) : null;
 
 const generateAccessToken = (identity) => {
     const AccessToken = twilio.jwt.AccessToken;

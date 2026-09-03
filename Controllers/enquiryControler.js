@@ -2,8 +2,9 @@ const db = require('../config/db');
 const dotenv=require('dotenv')
 dotenv.config();
 const twilio=require('twilio');
-const nodemailer=require('nodemailer');
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  : null;
 
 exports.create = async (req, res) => {
     let { name, email, phone_no, message, address, reason } = req.body;
