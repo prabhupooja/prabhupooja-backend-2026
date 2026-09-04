@@ -4,7 +4,8 @@ const { OAuth2Client } = require('google-auth-library');
 const db = require('../config/db');
 const {generateToken} = require("../config/genratetokenConfig")
 
-const client = new OAuth2Client('778173285670-ah3qn52m7qjlvdpqu0gituikmavi4sek.apps.googleusercontent.com');
+const googleMobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
+const client = new OAuth2Client(googleMobileClientId);
 
 router.post('/google', async (req, res) => {
 
@@ -20,7 +21,7 @@ router.post('/google', async (req, res) => {
   try {
     const ticket = await client.verifyIdToken({
       idToken,
-      audience: '778173285670-ah3qn52m7qjlvdpqu0gituikmavi4sek.apps.googleusercontent.com',
+      audience: googleMobileClientId,
     });
 
     const payload = ticket.getPayload();

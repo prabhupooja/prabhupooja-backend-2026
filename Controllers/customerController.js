@@ -560,9 +560,9 @@ exports.googleAuthCallback = (req, res) => {
     return res.status(401).json({ error: "Authentication failed" });
   }
   const redirectPath = req.query.state || "/";
-  const token = generateToken(user.id);
+  const frontendUrl = process.env.FRONTEND_URL || 'https://www.prabhupooja.com';
   return res.redirect(
-    `https://www.prabhupooja.com${redirectPath}?token=${token}`
+    `${frontendUrl}${redirectPath}?token=${token}`
   );
 };
 exports.AppGoogleLogin = async (req, res) => {

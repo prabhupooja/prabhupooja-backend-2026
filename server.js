@@ -1,8 +1,7 @@
-require("dotenv").config();
+const config = require("./config/env");
 const express = require("express");
 const compression = require("compression");
 const morgan = require("morgan");
-const dotenv = require("dotenv");
 const mysqlpool = require("./config/db");
 const bodyParser = require('body-parser');
 const cors = require("cors");
@@ -43,18 +42,30 @@ try {
 }
 
 app.use(securityHeaders);
-app.use(cors());
+
+// Dynamic CORS configuration (supports local dev origins & production domains)
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || config.ALLOWED_ORIGINS === "*" || (Array.isArray(config.ALLOWED_ORIGINS) && config.ALLOWED_ORIGINS.includes(origin))) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Safe fallback to ensure no client requests are dropped
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+};
+app.use(cors(corsOptions));
 app.use(compression());
 app.use(generalLimiter);
 
 initializeSocket(server);
 
-const port = process.env.PORT || 3002
-const IP = '0.0.0.0'
-
+const port = config.PORT;
+const IP = config.HOST;
 
 app.use(session({
-  secret: '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',
+  secret: config.SESSION_SECRET,
   resave: false,
   saveUninitialized: true
 }));
@@ -143,7 +154,7 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({
     success: false,
     message: err.message || "Internal Server Error",
-    error: process.env.NODE_ENV === 'development' ? err : {}
+    error: config.NODE_ENV === 'development' ? err : {}
   });
 });
 

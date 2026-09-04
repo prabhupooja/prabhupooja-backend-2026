@@ -1,13 +1,12 @@
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const passport = require('passport');
 const db = require('../config/db');
-
+const config = require('./env');
 
 passport.use(new GoogleStrategy({
-  clientID: '778173285670-45vnhj5hjoi06cvhc2n5pr0scadcgd0v.apps.googleusercontent.com',
-  clientSecret: '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',
-  // callbackURL: "https://prabhupooja-backend.onrender.com/auth/google/callback"
-  callbackURL: "http://localhost:3002/auth/google/callback"
+  clientID: config.GOOGLE.clientId,
+  clientSecret: config.GOOGLE.clientSecret,
+  callbackURL: config.GOOGLE.callbackUrl,
 },
   async (accessToken, refreshToken, profile, done) => {
 

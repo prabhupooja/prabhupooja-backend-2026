@@ -34,12 +34,13 @@ console.log("caller number",callerPhoneNumber)
 
         if (type === 'voice') {
             console.log(type)
+            const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3002}`;
             twilioCall = await client.calls.create({
                 from: process.env.TWILIO_PHONE_NUMBER,  
                 to: receiverPhoneNumber,            
-                url: `https://prabhu-pooja-app.onrender.com/api/v1/call/twiml?receiverPhoneNumber=${encodeURIComponent(receiverPhoneNumber)}`, 
-                statusCallback: 'https://prabhu-pooja-app.onrender.com/api/v1/call/status', // Add this line
-                statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'] // Add this line
+                url: `${backendUrl}/api/v1/call/twiml?receiverPhoneNumber=${encodeURIComponent(receiverPhoneNumber)}`, 
+                statusCallback: `${backendUrl}/api/v1/call/status`, 
+                statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'] 
             });
 
             response = {
@@ -217,8 +218,9 @@ exports.generateTwiml = (req, res) => {
         return res.status(400).send('Receiver phone number is required.');
     }
 
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3002}`;
     twiml.dial({
-        action: 'https://prabhu-pooja-app.onrender.com/api/v1/call/status', 
+        action: `${backendUrl}/api/v1/call/status`, 
         timeout: 20 
     }).number(receiverPhoneNumber);
 

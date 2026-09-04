@@ -1,13 +1,12 @@
 const mysql = require("mysql2/promise");
-const dotenv = require("dotenv");
-
-dotenv.config();
+const config = require("./env");
 
 const mysqlpool = mysql.createPool({
-  host: process.env.DbHost || "localhost",
-  user: process.env.DbUser || "root",
-  password: process.env.DbPassword || "",
-  database: process.env.DbName || "prabhupooja",
+  host: config.DB.host,
+  user: config.DB.user,
+  password: config.DB.password,
+  database: config.DB.database,
+  port: config.DB.port,
   charset: "utf8mb4",
   waitForConnections: true,
   connectionLimit: 30,
@@ -20,4 +19,3 @@ const mysqlpool = mysql.createPool({
 });
 
 module.exports = mysqlpool;
-

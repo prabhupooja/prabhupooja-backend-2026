@@ -104,7 +104,8 @@ exports.membership = async (req, res) => {
 
     setTimeout(async () => {
       console.log('Rechecking membership status after 1 minute...');
-      await fetch(`http://localhost:3002/api/v1/muhurat/member/${userId}`)
+      const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3002}`;
+      await fetch(`${backendUrl}/api/v1/muhurat/member/${userId}`)
         .then(response => response.json())
         .then(data => console.log('Recheck Response:', data))
         .catch(err => console.error('Error rechecking membership:', err));
