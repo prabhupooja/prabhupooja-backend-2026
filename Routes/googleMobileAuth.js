@@ -5,7 +5,7 @@ const db = require('../config/db');
 const {generateToken} = require("../config/genratetokenConfig")
 
 const googleMobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
-const client = new OAuth2Client(googleMobileClientId);
+const client = googleMobileClientId ? new OAuth2Client(googleMobileClientId) : null;
 
 router.post('/google', async (req, res) => {
 
@@ -13,9 +13,12 @@ router.post('/google', async (req, res) => {
 
   console.log("Received ID Token:", req.body.idToken);
 
-
   if (!idToken) {
     return res.status(400).json({ error: 'ID Token is required' });
+  }
+
+  if (!client) {
+    return res.status(500).json({ error: 'Google Mobile Auth not configured on server' });
   }
 
   try {
