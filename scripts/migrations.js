@@ -199,6 +199,30 @@ async function runMigrations() {
       console.warn("Note on yoga_users table migration:", ygErr.message);
     }
 
+    // 10. Ensure enquiry table has pandit_id, pandit_name, user_id, status, created_at
+    try {
+      const [eqCols] = await db.query("SHOW COLUMNS FROM enquiry");
+      const eqColNames = eqCols.map(c => c.Field.toLowerCase());
+      if (!eqColNames.includes('pandit_id')) {
+        await db.query("ALTER TABLE enquiry ADD COLUMN pandit_id INT DEFAULT NULL");
+      }
+      if (!eqColNames.includes('pandit_name')) {
+        await db.query("ALTER TABLE enquiry ADD COLUMN pandit_name VARCHAR(255) DEFAULT NULL");
+      }
+      if (!eqColNames.includes('user_id')) {
+        await db.query("ALTER TABLE enquiry ADD COLUMN user_id INT DEFAULT NULL");
+      }
+      if (!eqColNames.includes('status')) {
+        await db.query("ALTER TABLE enquiry ADD COLUMN status VARCHAR(50) DEFAULT 'Pending'");
+      }
+      if (!eqColNames.includes('created_at')) {
+        await db.query("ALTER TABLE enquiry ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+      }
+      console.log("✅ Checked/Updated columns on 'enquiry' table.");
+    } catch (eqErr) {
+      console.warn("Note on enquiry table migration:", eqErr.message);
+    }
+
     console.log("=== MIGRATIONS COMPLETE ===");
     return true;
   } catch (err) {
