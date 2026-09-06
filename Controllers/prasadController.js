@@ -467,7 +467,7 @@ exports.getAllBookingDetails = async (req, res) => {
       SELECT 
         pb.id,
         u.name AS user_name,
-        COALESCE(pb.mobile, u.mobile) AS user_number,
+        u.mobile AS user_number,
         u.email AS user_email,
         p.prasad_name AS prasad_name,
         p.image AS prasad_image,
@@ -481,13 +481,13 @@ exports.getAllBookingDetails = async (req, res) => {
         pb.status,
         pb.paymentMethod,
         pb.paymentid,
-        pb.shipping_address,
-        pb.city,
-        pb.state,
-        pb.pincode
+        pb.tracking_carrier,
+        pb.tracking_number,
+        uda.address AS shipping_address
       FROM prasad_booking pb
-      JOIN users u ON u.id = pb.userid
-      JOIN prasad p ON p.id = pb.prasadid
+      LEFT JOIN users u ON u.id = pb.userid
+      LEFT JOIN prasad p ON p.id = pb.prasadid
+      LEFT JOIN user_delivery_address uda ON uda.user_id = pb.userid
       ORDER BY pb.booking_date DESC
     `;
 
@@ -550,18 +550,19 @@ exports.getBookingByUserId = async (req, res) => {
   const { userId } = req.params;
 
   try {
-    // Check if the userId is provided
     if (!userId) {
       return res.status(400).json({
         success: false,
         message: 'User ID is required',
         prasadCount: 0,
+        data: [],
       });
     }
 
-    // Query to fetch booking details by user ID
     const query = `
       SELECT 
+        prasad_booking.id AS id,
+        prasad_booking.id AS booking_id,
         users.name AS user_name,
         users.mobile AS user_number,
         users.email AS user_email,
@@ -570,39 +571,57 @@ exports.getBookingByUserId = async (req, res) => {
         prasad_booking.amount,
         prasad_booking.sankalpa_name,
         prasad_booking.sankalpa_gotra,
-        prasad_booking.booking_date
+        prasad_booking.quantity,
+        prasad_booking.prasadweight,
+        prasad_booking.weight,
+        prasad_booking.booking_date,
+        COALESCE(prasad_booking.status, 'confirmed') AS status,
+        prasad_booking.tracking_carrier,
+        prasad_booking.tracking_number
       FROM prasad_booking
       JOIN users ON users.id = prasad_booking.userid
       JOIN prasad ON prasad.id = prasad_booking.prasadid
-      WHERE prasad_booking.userid = ?`; // Filter by userId
+      WHERE prasad_booking.userid = ?
+      ORDER BY prasad_booking.booking_date DESC`;
 
-    // Execute the query
     const [data] = await db.query(query, [userId]);
 
-    // If no bookings are found, return 0 in prasadCount
-    if (data.length === 0) {
+    if (!data || data.length === 0) {
       return res.status(200).json({
         success: true,
         prasadCount: 0,
         message: 'No bookings found for the given user ID.',
-        data: [], // Send an empty array for clarity
+        data: [],
       });
     }
 
-    // Get the count of records
-    const prasadCount = data.length;  // Use data.length to get the number of records
+    const formatPrasadImg = (img) => {
+      if (!img || img === "null" || img === "undefined") return null;
+      const clean = typeof img === "string" ? img.trim() : "";
+      if (!clean || clean === "null" || clean === "undefined") return null;
+      if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("data:")) return clean;
+      const baseUrl = process.env.BACKEND_URL || "https://api.prabhupooja.com";
+      const cleanBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+      return `${cleanBase}/uploads/${clean.replace(/^\/+/, "")}`;
+    };
 
-    // Return the response with the count and data
-    res.status(200).json({
+    const formattedData = data.map((item) => ({
+      ...item,
+      prasadImage: formatPrasadImg(item.prasadImage),
+      amount: parseFloat(item.amount || 0),
+    }));
+
+    return res.status(200).json({
       success: true,
-      prasadCount: prasadCount,
-      data: data,  // Send the fetched data in the response
+      prasadCount: formattedData.length,
+      data: formattedData,
     });
   } catch (error) {
     console.error('Error fetching booking details:', error.message);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      prasadCount: 0, // Ensure prasadCount is included even in errors
+      prasadCount: 0,
+      data: [],
       message: 'Failed to retrieve booking details. Please try again later.',
     });
   }

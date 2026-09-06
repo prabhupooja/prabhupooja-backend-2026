@@ -126,59 +126,73 @@ exports.verifyPayment = async (req, res) => {
           });
         }
       }
-      if (payment[0].puja === 'Astrology') {
-        // Update balance for Astrology payment
-        const userData = await db.query(
+      const isWalletRecharge = 
+        payment[0].puja === 'Astrology' || 
+        payment[0].puja === 'Wallet Recharge' || 
+        payment[0].puja === 'wallet' || 
+        payment[0].puja === 'Wallet' || 
+        payment[0].puja === 'Recharge' || 
+        (!payment[0].puja_id && payment[0].puja !== 'Membership');
+
+      if (isWalletRecharge) {
+        // Update balance for Wallet / Astrology payment
+        const creditAmount = parseFloat(payment[0].amount || 0);
+        await db.query(
           'UPDATE users SET balance = COALESCE(balance, 0) + ? WHERE id = ?',
-          [payment[0].amount, payment[0].user_id]
+          [creditAmount, payment[0].user_id]
         );
 
-        // Fetch user details
-        const [user] = await db.query('SELECT name, email FROM users WHERE id = ?', [payment[0].user_id]);
+        // Fetch new balance
+        const [uBalanceRows] = await db.query('SELECT balance, name, email FROM users WHERE id = ?', [payment[0].user_id]);
+        const newBalance = uBalanceRows.length > 0 ? parseFloat(uBalanceRows[0].balance || 0) : creditAmount;
 
-        if (user && user[0].email) {
-          const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-              user: process.env.email,
-              pass: process.env.pass,
-            }
-          });
+        // Log transaction in wallet_transactions
+        try {
+          await db.query(
+            `INSERT INTO wallet_transactions (user_id, amount, type, purpose, payment_id, order_id, balance_after, status)
+             VALUES (?, ?, 'credit', ?, ?, ?, ?, 'success')`,
+            [
+              payment[0].user_id,
+              creditAmount,
+              payment[0].puja || 'Wallet Recharge',
+              razorpay_payment_id,
+              razorpay_order_id,
+              newBalance,
+            ]
+          );
+        } catch (txErr) {
+          console.warn("Wallet transaction log notice:", txErr.message);
+        }
 
-          // Decide email content based on success or failure of balance update
-          let subject, text;
+        // Fetch user details & send email
+        const user = uBalanceRows;
 
-          if (!userData || userData.affectedRows === 0) {
-            subject = 'Balance Update Failed';
-            text = `Dear ${user[0].name},\n\nYour payment of ₹${payment[0].amount} was successful, but we encountered an issue while updating your balance. Our team has been notified, and we're working to resolve it.\n\nBest regards,\nPrabhuPooja`;
-          } else {
-            subject = 'Astrology Balance Updated';
-            text = `Dear ${user[0].name},\n\nYour payment of ₹${payment[0].amount} has been successfully processed and your balance has been updated.\n\nThank you for choosing PrabhuPooja!\n\nBest regards,\nPrabhuPooja`;
+        if (user && user[0]?.email) {
+          try {
+            const transporter = nodemailer.createTransport({
+              service: 'gmail',
+              auth: {
+                user: process.env.email,
+                pass: process.env.pass,
+              }
+            });
+
+            const mailOptions = {
+              from: process.env.email,
+              to: user[0].email,
+              subject: 'Pooja Wallet Recharged Successfully',
+              text: `Dear ${user[0].name},\n\nYour payment of ₹${creditAmount} has been successfully processed and your Pooja Wallet has been credited.\n\nCurrent Wallet Balance: ₹${newBalance}\n\nThank you for choosing PrabhuPooja!\n\nBest regards,\nPrabhuPooja Support`
+            };
+
+            transporter.sendMail(mailOptions, (error, info) => {
+              if (error) {
+                console.warn('Wallet email warning:', error.message);
+              }
+            });
+          } catch (mailErr) {
+            console.warn('Wallet mail error:', mailErr.message);
           }
-
-          const mailOptions = {
-            from: process.env.email,
-            to: user[0].email,
-            subject,
-            text
-          };
-
-          transporter.sendMail(mailOptions, (error, info) => {
-            if (error) {
-              console.error('Error sending email:', error);
-            } else {
-              console.log('Email sent: ' + info.response);
-            }
-          });
         }
-
-        if (!userData || userData.affectedRows === 0) {
-          return res.status(404).send({
-            success: false,
-            message: "Error in user update query"
-          });
-        }
-
       }
       else if (payment[0].puja === 'Membership') {
 
@@ -443,6 +457,34 @@ exports.paymentStatus = async (req, res) => {
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+    });
+  }
+};
+
+exports.getWalletTransactions = async (req, res) => {
+  const { userId } = req.params;
+
+  if (!userId) {
+    return res.status(400).json({ success: false, message: "User ID is required", data: [] });
+  }
+
+  try {
+    const [txs] = await db.query(
+      `SELECT * FROM wallet_transactions WHERE user_id = ? ORDER BY created_at DESC`,
+      [userId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: txs || [],
+    });
+  } catch (err) {
+    console.error("Error fetching wallet transactions:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      data: [],
+      error: err.message,
     });
   }
 };

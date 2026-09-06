@@ -331,7 +331,6 @@ console.log(req.body);
   
 exports.getAllBookings = async (req, res) => {
   try {
-  
     const query = `
       SELECT 
         tb.id AS booking_id,
@@ -347,74 +346,96 @@ exports.getAllBookings = async (req, res) => {
         t.email AS temple_email,
         t.number AS temple_number
       FROM temple_booking tb
-      JOIN users u ON tb.user_id = u.id
-      JOIN temple t ON tb.temple_id = t.id;
+      LEFT JOIN users u ON tb.user_id = u.id
+      LEFT JOIN temple t ON tb.temple_id = t.id
+      ORDER BY tb.id DESC;
     `;
     
-   
     const [bookingData] = await db.query(query);
-
-    if (bookingData.length === 0) {
-      return res.status(404).send({
-        success: false,
-        message: 'No bookings found',
-      });
-    }
 
     return res.status(200).send({
       success: true,
-      data: bookingData,  
+      count: bookingData ? bookingData.length : 0,
+      data: bookingData || [],  
     });
   } catch (error) {
-    console.error('Database error:', error);
+    console.error('Database error in getAllBookings temple:', error);
     return res.status(500).send({
       success: false,
       message: 'Internal Server Error',
+      data: []
     });
   }
 };
 exports.getByUserId = async (req, res) => {
-  const { userId } = req.params; // Assuming userId is passed as a route parameter
+  const { userId } = req.params;
   
   try {
     if (!userId) {
       return res.status(400).send({
         success: false,
         message: "User ID is required",
+        count: 0,
+        data: [],
       });
     }
 
-    // Query to fetch all records for the given userId
-    const data = await db.query(`
+    const [data] = await db.query(`
       SELECT 
-      temple.name AS templeName,
+        temple_booking.id AS id,
+        temple.id AS temple_id,
+        temple.name AS temple_name,
+        temple.name AS templeName,
         temple.image AS templeImage,
         temple.price AS templePrice,
         temple.description AS templeAddress,
-        temple_booking.puja_date AS bookingDate
+        COALESCE(temple_booking.devotees_count, 1) AS devotees_count,
+        temple_booking.puja_date AS darshan_date,
+        temple_booking.puja_date AS bookingDate,
+        COALESCE(temple_booking.slot, 'Morning VIP Sugam Darshan') AS darshan_slot,
+        COALESCE(temple_booking.status, 'confirmed') AS status,
+        COALESCE(temple_booking.qr_pass_code, CONCAT('TM-', temple_booking.id, '-', SUBSTRING(MD5(temple_booking.id), 1, 6))) AS qr_pass_code
       FROM temple
       INNER JOIN temple_booking ON temple_booking.temple_id = temple.id
-      WHERE temple_booking.user_id = ?`, [userId]);
+      WHERE temple_booking.user_id = ?
+      ORDER BY temple_booking.id DESC`, [userId]);
 
-    if (data.length === 0) {
-      return res.status(404).send({
-        success: false,
+    if (!data || data.length === 0) {
+      return res.status(200).send({
+        success: true,
         message: "No temples found for the given user ID",
+        count: 0,
+        data: [],
       });
     }
 
-    const templeCount = data[0].length;
-console.log(data[0])
+    const formatTempleImg = (img) => {
+      if (!img || img === "null" || img === "undefined") return null;
+      const clean = typeof img === "string" ? img.trim() : "";
+      if (!clean || clean === "null" || clean === "undefined") return null;
+      if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("data:")) return clean;
+      const baseUrl = process.env.BACKEND_URL || "https://api.prabhupooja.com";
+      const cleanBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+      return `${cleanBase}/uploads/${clean.replace(/^\/+/, "")}`;
+    };
+
+    const formattedData = data.map(item => ({
+      ...item,
+      templeImage: formatTempleImg(item.templeImage),
+    }));
+
     return res.status(200).send({
       success: true,
       message: "Records fetched successfully",
-      count: templeCount, 
-      data: data[0],          
+      count: formattedData.length, 
+      data: formattedData,          
     });
   } catch (error) {
     console.error("Error fetching data from the table:", error);
     return res.status(500).send({
       success: false,
+      count: 0,
+      data: [],
       message: "An error occurred while fetching the records",
     });
   }

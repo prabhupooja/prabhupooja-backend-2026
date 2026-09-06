@@ -657,3 +657,52 @@ exports.getPanditsByPoojaId = async (req, res) => {
     });
   }
 };
+
+exports.getUserBookings = async (req, res) => {
+  const { userId } = req.params;
+
+  if (!userId) {
+    return res.status(400).json({ success: false, message: "User ID is required", data: [] });
+  }
+
+  try {
+    const query = `
+      SELECT 
+        pb.id,
+        pb.id AS booking_id,
+        COALESCE(p.name, pb.package_name, 'Vedic Puja') AS pooja_name,
+        COALESCE(pb.devotee_name, u.name) AS sankalp_name,
+        pb.gotra,
+        pb.bookingdate AS booking_date,
+        COALESCE(pb.amount, p.final_price, p.price, 0) AS price,
+        COALESCE(pb.booking_status, 'confirmed') AS status,
+        COALESCE(pd.name, 'Pt. Vedic Shastri') AS pandit_name,
+        pd.mobile AS pandit_mobile,
+        p.image AS pooja_image,
+        CONCAT('https://meet.prabhupooja.com/puja-', pb.id) AS live_stream_url
+      FROM puja_booking pb
+      LEFT JOIN users u ON pb.userid = u.id
+      LEFT JOIN puja p ON pb.pujaid = p.id
+      LEFT JOIN pandit pd ON (pb.selected_pandit_id IS NOT NULL AND pb.selected_pandit_id = pd.id) 
+                          OR (pb.selected_pandit_id IS NULL AND FIND_IN_SET(pd.id, p.pandit_id) > 0)
+      WHERE pb.userid = ?
+      ORDER BY pb.bookingdate DESC
+    `;
+
+    const [bookings] = await db.query(query, [userId]);
+
+    return res.status(200).json({
+      success: true,
+      count: bookings ? bookings.length : 0,
+      data: bookings || [],
+    });
+  } catch (error) {
+    console.error("Error fetching online puja bookings by user:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      data: [],
+      error: error.message,
+    });
+  }
+};

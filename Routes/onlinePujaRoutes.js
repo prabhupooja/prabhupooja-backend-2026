@@ -36,5 +36,7 @@ router.delete("/delete/:id",AdminverifyToken, puja.delete)
 router.get("/search", puja.searchPooja)
 router.post("/poojaDetailsforpandit", puja.poojaDetailsforpandit)
 router.get("/:poojaId/pandits", puja.getPanditsByPoojaId)
+router.get("/getuser/:userId", puja.getUserBookings)
+router.get("/getUser/:userId", puja.getUserBookings)
 
 module.exports = router

@@ -94,7 +94,9 @@ app.use("/api/v1/panditComment",require('./Routes/panditComment'));
 app.use("/api/v1/payment", require("./Routes/paymentRoutes"));
 app.use("/api/v1/user/services", require("./Routes/serviceRoutes"));
 app.use("/api/v1/user/onlinePuja", require("./Routes/onlinePujaRoutes"));
+app.use("/api/v1/onlinepuja", require("./Routes/onlinePujaRoutes"));
 app.use("/api/v1/user/prasad", require("./Routes/prasadRoutes"));
+app.use("/api/v1/prasad", require("./Routes/prasadRoutes"));
 app.use("/api/v1/live_stream", require("./Routes/liveStreamRoute"));
 app.use("/api/v1/chats", require("./Routes/chatRoutes"));
 app.use("/api/v1/call", require("./Routes/callRoutes"));
@@ -123,9 +125,18 @@ app.use("/api/v1/coupon", require("./Routes/ProductCouponRoutes"));
 app.use("/api/v1/media",require('./Routes/mediaRoutes'));
 app.use("/api/v1/pushNotification", require('./Routes/mobilePushNotification'));
 app.use("/api/v1/pushNotificatin", require('./Routes/mobilePushNotification'));
-
 app.use("/api/v1/rudraAbhishek",require('./Routes/rudraAbhishekRoutes'));
 app.use("/api/v1/events", require('./Routes/eventRoutes'));
+
+// Unprefixed route aliases for direct endpoints
+app.use("/users", require("./Routes/customerRoutes"));
+app.use("/pandit", require("./Routes/panditRoutes"));
+app.use("/payment", require("./Routes/paymentRoutes"));
+app.use("/orders", require("./Routes/orderRoutes"));
+app.use("/onlinepuja", require("./Routes/onlinePujaRoutes"));
+app.use("/temple", require("./Routes/templeRoutes"));
+app.use("/yoga", require("./Routes/yogaRoutes"));
+app.use("/events", require("./Routes/eventRoutes"));
 
 app.use(express.static(path.join(__dirname, 'public')));
 

@@ -650,6 +650,16 @@ exports.getProductByOrderId = async (req, res) => {
   }
 };
 
+const formatProductImage = (img) => {
+  if (!img || img === "null" || img === "undefined") return null;
+  const clean = typeof img === "string" ? img.trim() : "";
+  if (!clean || clean === "null" || clean === "undefined") return null;
+  if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("data:")) return clean;
+  const baseUrl = process.env.BACKEND_URL || "https://api.prabhupooja.com";
+  const cleanBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return `${cleanBase}/uploads/${clean.replace(/^\/+/, "")}`;
+};
+
 exports.getbyId = async (req, res) => {
   const { userId } = req.params;
 
@@ -657,60 +667,140 @@ exports.getbyId = async (req, res) => {
     return res.status(400).send({
       success: false,
       message: "User ID is required",
+      data: { orderCount: 0, orders: [] },
     });
   }
 
   try {
     const query = `
-            SELECT 
-                orders.id AS orderId,
-                orders.userId,
-                orders.productId,
-                orders.quantity,
-                orders.order_status,
-                orders.cancel_reason,
-                 orders.paymentMethod,
-                orders.totalPrice,
-                orders.images,
-                users.name AS userName,
-                users.email AS userEmail,
-                orders.createdAt AS orderDate
-            FROM orders
-            INNER JOIN users ON orders.userId = users.id
-            WHERE orders.userId = ?
-            ORDER BY orders.createdAt DESC
-        `;
+      SELECT 
+        orders.id AS orderId,
+        orders.userId,
+        orders.productId,
+        orders.quantity,
+        orders.order_status,
+        orders.status AS payment_status,
+        orders.cancel_reason,
+        orders.paymentMethod,
+        orders.totalPrice,
+        orders.images,
+        orders.shipping_address,
+        ot.order_progress_status,
+        users.name AS userName,
+        users.email AS userEmail,
+        orders.createdAt AS orderDate
+      FROM orders
+      INNER JOIN users ON orders.userId = users.id
+      LEFT JOIN order_tracking ot ON orders.id = ot.order_id
+      WHERE orders.userId = ?
+      ORDER BY orders.createdAt DESC
+    `;
 
-    const orders = await db.query(query, [userId]);
+    const [orders] = await db.query(query, [userId]);
 
-    if (!orders.length) {
-      return res.status(404).send({
-        success: false,
-        message: "No orders found for this user",
+    const validOrders = (orders || []).filter(
+      (order) => order && order.orderId !== null && order.orderId !== undefined
+    );
+
+    if (!validOrders || validOrders.length === 0) {
+      return res.status(200).send({
+        success: true,
+        data: {
+          orderCount: 0,
+          orders: [],
+        },
       });
     }
-    const orderCount = orders[0].length;
 
-    const orderDetails = await Promise.all(
-      orders.map(async (order) => {
-        return {
-          ...order,
-        };
-      })
-    );
+    const formattedOrders = validOrders.map((order) => {
+      let parsedImages = [];
+      try {
+        if (Array.isArray(order.images)) {
+          parsedImages = order.images;
+        } else if (typeof order.images === "string") {
+          const trimmed = order.images.trim();
+          if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+            parsedImages = JSON.parse(trimmed);
+          } else if (trimmed) {
+            parsedImages = trimmed.split(",").map((s) => s.trim());
+          }
+        }
+      } catch (e) {
+        parsedImages = [];
+      }
+
+      parsedImages = (parsedImages || []).map((img) => formatProductImage(img)).filter(Boolean);
+
+      let parsedQuantity = [1];
+      try {
+        if (Array.isArray(order.quantity)) {
+          parsedQuantity = order.quantity;
+        } else if (typeof order.quantity === "string") {
+          const trimmed = order.quantity.trim();
+          if (trimmed.startsWith("[")) {
+            parsedQuantity = JSON.parse(trimmed);
+          } else if (trimmed) {
+            parsedQuantity = trimmed.split(",").map((q) => parseInt(q.trim()) || 1);
+          }
+        } else if (typeof order.quantity === "number") {
+          parsedQuantity = [order.quantity];
+        }
+      } catch (e) {
+        parsedQuantity = [1];
+      }
+
+      let parsedProductId = [];
+      try {
+        if (Array.isArray(order.productId)) {
+          parsedProductId = order.productId;
+        } else if (typeof order.productId === "string") {
+          const trimmed = order.productId.trim();
+          if (trimmed.startsWith("[")) {
+            parsedProductId = JSON.parse(trimmed);
+          } else if (trimmed) {
+            parsedProductId = trimmed.split(",").map((p) => parseInt(p.trim()) || p.trim());
+          }
+        } else if (typeof order.productId === "number") {
+          parsedProductId = [order.productId];
+        }
+      } catch (e) {
+        parsedProductId = [];
+      }
+
+      const rawProgress = order.order_progress_status || order.order_status || "order_placed";
+
+      return {
+        orderId: order.orderId,
+        userId: order.userId,
+        productId: parsedProductId,
+        quantity: parsedQuantity,
+        order_status: order.order_status || "pending",
+        order_progress_status: rawProgress,
+        status: rawProgress,
+        paymentStatus: order.payment_status || "pending",
+        cancel_reason: order.cancel_reason,
+        paymentMethod: order.paymentMethod,
+        totalPrice: parseFloat(order.totalPrice || 0),
+        images: parsedImages,
+        userName: order.userName,
+        userEmail: order.userEmail,
+        orderDate: order.orderDate,
+      };
+    });
 
     return res.status(200).send({
       success: true,
       data: {
-        orderCount,
-        orders: orderDetails[0],
+        orderCount: formattedOrders.length,
+        orders: formattedOrders,
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in getbyId:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+      error: error.message,
     });
   }
 };
@@ -783,7 +873,7 @@ exports.delete = async (req, res) => {
 
 exports.getByMerchantId = async (req, res) => {
   let { merchantId } = req.params;
-  let { limit, page, search } = req.query;
+  let { limit, page, search } = req.query || {};
 
   if (!merchantId) {
     return res.status(400).send({
@@ -825,9 +915,9 @@ exports.getByMerchantId = async (req, res) => {
       );
     }
 
-    if (req.query.search) {
+    if (search) {
       try {
-        const decodedSearch = decodeURIComponent(req.query.search);
+        const decodedSearch = decodeURIComponent(search);
         const searchParams = new URLSearchParams(decodedSearch);
         const startDateStr = searchParams.get("startdate");
         const endDateStr = searchParams.get("enddate");
@@ -1202,17 +1292,25 @@ exports.orderTrackingByUser = async (req, res) => {
         o.paymentMethod,
         o.status AS orderPaymentStatus,
         o.order_status AS orderStatus,
+        o.cancel_reason,
         o.createdAt AS orderDate,
-        o.shipping_address as shippingAddress,
+        o.shipping_address AS shippingAddress,
         o.payment_id AS transactionId,
         u.name AS userName,
+        u.lastname AS userLastName,
         u.email AS userEmail,
-        u.image As userImage,
+        u.mobile AS userNumber,
+        u.address AS userAddress,
+        u.city AS userCity,
+        u.state AS userState,
+        u.postalCode AS userPostalCode,
+        u.country AS userCountry,
+        u.image AS userImage,
         ot.status AS trackingStatus,
         ot.status_date,
         ot.estimated_delivery_start,
         ot.estimated_delivery_end,
-         ot.order_progress_status,
+        ot.order_progress_status,
         ot.created_at AS trackingCreatedAt,
         ot.updated_at AS trackingUpdatedAt
       FROM orders o
@@ -1221,51 +1319,173 @@ exports.orderTrackingByUser = async (req, res) => {
       WHERE o.id = ?
     `;
 
-    const [order] = await db.query(query, [orderId]);
+    const [orderRows] = await db.query(query, [orderId]);
 
-    if (order.length === 0) {
+    if (!orderRows || orderRows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "Order not found",
       });
     }
 
-    const productIds = order[0].productId;
-    const quantities = order[0].quantity;
+    const row = orderRows[0];
 
-    console.log(productIds, "lklklk");
+    // 1. Parse Products and Quantities
+    let productIds = [];
+    try {
+      if (Array.isArray(row.productId)) {
+        productIds = row.productId;
+      } else if (typeof row.productId === "string") {
+        const trimmed = row.productId.trim();
+        if (trimmed.startsWith("[")) {
+          productIds = JSON.parse(trimmed);
+        } else if (trimmed) {
+          productIds = trimmed.split(",").map((id) => parseInt(id.trim())).filter(Boolean);
+        }
+      } else if (typeof row.productId === "number") {
+        productIds = [row.productId];
+      }
+    } catch (parseErr) {
+      productIds = [];
+    }
 
-    const [productDetails] = await db.query(
-      `SELECT * FROM products WHERE id IN (?)`,
-      [productIds]
-    );
+    let quantities = [];
+    try {
+      if (Array.isArray(row.quantity)) {
+        quantities = row.quantity;
+      } else if (typeof row.quantity === "string") {
+        const trimmed = row.quantity.trim();
+        if (trimmed.startsWith("[")) {
+          quantities = JSON.parse(trimmed);
+        } else if (trimmed) {
+          quantities = trimmed.split(",").map((q) => parseInt(q.trim()) || 1);
+        }
+      } else if (typeof row.quantity === "number") {
+        quantities = [row.quantity];
+      }
+    } catch (parseErr) {
+      quantities = [];
+    }
 
-    const productDetailsWithQuantity = productDetails.map((product) => {
-      const index = productIds.indexOf(product.id);
-      return {
-        ...product,
-        quantity: quantities[index],
-      };
-    });
+    let productDetailsWithQuantity = [];
+    if (productIds.length > 0) {
+      const [productRows] = await db.query(
+        `SELECT id AS productId, productName, image, price, offerPrice, description, merchantId
+         FROM products WHERE id IN (?)`,
+        [productIds]
+      );
 
+      productDetailsWithQuantity = productRows.map((product) => {
+        const index = productIds.indexOf(product.productId);
+        return {
+          ...product,
+          image: formatProductImage(product.image),
+          quantity: quantities[index] || 1,
+        };
+      });
+    }
+
+    // 2. Parse / Structure Shipping Address
+    let parsedShippingAddress = {
+      name: row.userName || "",
+      lastname: row.userLastName || "",
+      email: row.userEmail || "",
+      number: row.userNumber || "",
+      address: row.userAddress || "",
+      city: row.userCity || "",
+      state: row.userState || "",
+      postalCode: row.userPostalCode || "",
+      country: row.userCountry || "India",
+    };
+
+    if (row.shippingAddress) {
+      try {
+        if (typeof row.shippingAddress === "object") {
+          parsedShippingAddress = { ...parsedShippingAddress, ...row.shippingAddress };
+        } else if (typeof row.shippingAddress === "string") {
+          const trimmed = row.shippingAddress.trim();
+          if (trimmed.startsWith("{")) {
+            const parsedObj = JSON.parse(trimmed);
+            parsedShippingAddress = { ...parsedShippingAddress, ...parsedObj };
+          } else if (trimmed) {
+            parsedShippingAddress.address = trimmed;
+          }
+        }
+      } catch (addrErr) {
+        console.warn("Shipping address parse warning:", addrErr.message);
+      }
+    }
+
+    // 3. Parse / Structure Tracking Status Timeline
+    const orderDateStr = row.orderDate ? new Date(row.orderDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : "Recently";
+    const estStartStr = row.estimated_delivery_start ? new Date(row.estimated_delivery_start).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : "Expected soon";
+    const estEndStr = row.estimated_delivery_end ? new Date(row.estimated_delivery_end).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : "Expected 4-5 days";
+
+    let parsedTrackingStatus = [];
+    try {
+      if (Array.isArray(row.trackingStatus)) {
+        parsedTrackingStatus = row.trackingStatus;
+      } else if (typeof row.trackingStatus === "string") {
+        const trimmed = row.trackingStatus.trim();
+        if (trimmed.startsWith("[")) {
+          parsedTrackingStatus = JSON.parse(trimmed);
+        }
+      }
+    } catch (trkErr) {
+      parsedTrackingStatus = [];
+    }
+
+    if (!Array.isArray(parsedTrackingStatus) || parsedTrackingStatus.length === 0) {
+      const isDelivered = row.orderStatus === "delivered" || row.orderStatus === "complete";
+      const isShipped = row.orderStatus === "dispatched" || row.orderStatus === "shipped";
+      const isCancelled = row.orderStatus === "cancel" || row.orderStatus === "cancelled";
+
+      parsedTrackingStatus = [
+        { name: "Order Placed", status: isCancelled ? "error" : "completed", date: orderDateStr },
+        { name: "Processing & Packaging", status: isCancelled ? "error" : (isDelivered || isShipped ? "completed" : "processing"), date: isCancelled ? "Order Cancelled" : "In Warehouse" },
+        { name: "Dispatched & In Transit", status: isCancelled ? "error" : (isDelivered ? "completed" : (isShipped ? "processing" : "pending")), date: isShipped ? "Dispatched" : `Expected ${estStartStr}` },
+        { name: "Delivered", status: isCancelled ? "error" : (isDelivered ? "completed" : "pending"), date: isDelivered ? "Delivered" : `Expected ${estEndStr}` },
+      ];
+    }
+
+    // 4. Fetch Invoice URL
     const [invoiceRows] = await db.query(
       `SELECT path_url FROM order_invoice WHERE order_id = ?`,
       [orderId]
     );
-
-    const invoiceUrl = invoiceRows.length ? invoiceRows[0].path_url : null;
+    let invoiceUrl = null;
+    if (invoiceRows.length > 0 && invoiceRows[0].path_url) {
+      const rawUrl = invoiceRows[0].path_url.trim();
+      if (rawUrl && rawUrl !== "No invoice found" && rawUrl !== "null" && rawUrl !== "undefined") {
+        invoiceUrl = rawUrl;
+      }
+    }
 
     return res.status(200).send({
       success: true,
-      order: order[0],
+      order: {
+        orderId: row.orderId,
+        orderDate: row.orderDate,
+        totalPrice: parseFloat(row.totalPrice || 0),
+        orderStatus: row.orderPaymentStatus || row.orderStatus || "Paid",
+        order_progress_status: row.order_progress_status || row.orderStatus || "order_placed",
+        cancel_reason: row.cancel_reason || null,
+        estimated_delivery_start: row.estimated_delivery_start,
+        estimated_delivery_end: row.estimated_delivery_end,
+        paymentMethod: row.paymentMethod,
+        transactionId: row.transactionId,
+        shippingAddress: parsedShippingAddress,
+        trackingStatus: parsedTrackingStatus,
+      },
       products: productDetailsWithQuantity,
       invoiceUrl: invoiceUrl,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in orderTrackingByUser:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+      error: error.message,
     });
   }
 };
@@ -1417,229 +1637,170 @@ exports.userOrderById = async (req, res) => {
 
 exports.statusUpdate = async (req, res) => {
   const { orderId } = req.params;
-  const { status, name, order_progress_status, paymentStatus } = req.body;
+  const {
+    status,
+    name,
+    statusName,
+    orderStatus,
+    order_progress_status,
+    paymentStatus,
+    orderPaymentStatus,
+    totalPrice,
+    paymentMethod,
+    cancelReason,
+    cancel_reason,
+  } = req.body;
+
+  if (!orderId) {
+    return res.status(400).json({ success: false, message: "Order ID is required" });
+  }
 
   const currentDate = new Date().toISOString().split("T")[0];
 
-  const orderQuery = `
-    SELECT 
-        orders.id AS orderId,
-        orders.userId
-    FROM orders
-    WHERE orders.id = ?
-`;
-  const [order] = await db.query(orderQuery, [orderId]);
-
   try {
-    if (paymentStatus) {
-      await db.query(
-        `
-        UPDATE orders
-        SET status = ?
-        WHERE id = ?
-      `,
-        [paymentStatus, orderId]
-      );
+    const orderQuery = `SELECT id AS orderId, userId, order_status, status FROM orders WHERE id = ?`;
+    const [orderRows] = await db.query(orderQuery, [orderId]);
 
-      await sendNotificationToUser(
-        "Payment Status",
-        `Payment status updated to ${paymentStatus}`,
-        order[0].userId
-      );
-
-      await sendUserNotification(
-        order[0].userId,
-        "Payment Status",
-        `Payment status updated to ${paymentStatus}`
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: `Payment status updated to ${paymentStatus}`,
-      });
-    } else {
-      if (!status || !name || !order_progress_status) {
-        return res
-          .status(400)
-          .json({ message: "Missing required fields for status update" });
-      }
-
-      if (!["processing", "completed", "error"].includes(status)) {
-        return res
-          .status(400)
-          .json({
-            message:
-              "Invalid status, allowed values: processing, completed, error",
-          });
-      }
-
-      const [orderTrackingResult] = await db.query(
-        "SELECT status FROM order_tracking WHERE order_id = ?",
-        [orderId]
-      );
-
-      if (orderTrackingResult.length === 0) {
-        return res.status(404).json({ message: "Order not found." });
-      }
-
-      let orderTracking = orderTrackingResult[0].status;
-
-      if (status === "error") {
-        let anyUpdated = false;
-        orderTracking = orderTracking.map((step) => {
-          if (step.status === "processing") {
-            step.status = "error";
-            step.date = currentDate;
-            anyUpdated = true;
-          }
-          return step;
-        });
-
-        if (anyUpdated) {
-          await db.query(
-            `
-          UPDATE order_tracking
-          SET status = ?
-          WHERE order_id = ?
-        `,
-            [JSON.stringify(orderTracking), orderId]
-          );
-        }
-
-        await db.query(
-          `
-        UPDATE orders
-        SET order_status = 'cancel', cancel_reason = 'Cancelled by admin'
-        WHERE id = ?
-      `,
-          [orderId]
-        );
-
-        return res.status(200).json({
-          success: true,
-          message:
-            "Order has been cancelled and all processing steps marked as error.",
-        });
-      }
-
-      if (status === "processing") {
-        let anyUpdated = false;
-        orderTracking = orderTracking.map((step) => {
-          if (step.status === "error" || step.name === name) {
-            step.status = "processing";
-            step.date = currentDate;
-            anyUpdated = true;
-          }
-          return step;
-        });
-
-        if (anyUpdated) {
-          await db.query(
-            `
-          UPDATE order_tracking
-          SET status = ?
-          WHERE order_id = ?
-        `,
-            [JSON.stringify(orderTracking), orderId]
-          );
-        }
-
-        await db.query(
-          `
-        UPDATE orders
-        SET order_status = 'pending', cancel_reason = ''
-        WHERE id = ?
-      `,
-          [orderId]
-        );
-      }
-      let updated = false;
-      orderTracking = orderTracking.map((step) => {
-        if (step.name === name) {
-          step.status = status;
-          step.date = currentDate;
-          updated = true;
-        }
-        return step;
-      });
-
-      if (!updated) {
-        return res.status(404).json({ message: "Order step not found." });
-      }
-
-      await db.query(
-        `
-      UPDATE order_tracking
-      SET status = ?
-      WHERE order_id = ?
-    `,
-        [JSON.stringify(orderTracking), orderId]
-      );
-
-      await db.query(
-        `
-      UPDATE order_tracking
-      SET order_progress_status = ?
-      WHERE order_id = ?
-    `,
-        [order_progress_status, orderId]
-      );
-
-      if (name === "Delivered") {
-        if (status === "completed") {
-          await db.query(
-            `
-          UPDATE orders
-          SET order_status = 'complete'
-          WHERE id = ?
-        `,
-            [orderId]
-          );
-        } else if (status === "processing") {
-          await db.query(
-            `
-          UPDATE orders
-          SET order_status = 'pending'
-          WHERE id = ?
-        `,
-            [orderId]
-          );
-        }
-      }
-
-      // Optional paymentStatus update if sent along with others
-      if (paymentStatus) {
-        await db.query(
-          `
-        UPDATE orders 
-        SET status = ? 
-        WHERE id = ?
-      `,
-          [paymentStatus, orderId]
-        );
-      }
-
-      await sendNotificationToUser(
-        "Order Update",
-        `Hello! Your order status has changed to ${order_progress_status}. Track your order 📱`,
-         order[0].userId,
-      );
-
-      await sendUserNotification(
-        order[0].userId,
-        "Order Update",
-        `Hello! Your order status has changed to ${order_progress_status}. Track your order 📱`
-      );
-      return res.status(200).json({
-        success: true,
-        message: `Order ${name} status updated to ${status} and progress status set to ${order_progress_status}.`,
-      });
+    if (!orderRows || orderRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found." });
     }
+
+    const currentOrder = orderRows[0];
+    const resolvedProgressStatus = order_progress_status || orderStatus || statusName || name || status || "processing";
+    const resolvedPaymentStatus = paymentStatus || orderPaymentStatus || null;
+    const resolvedCancelReason = cancelReason || cancel_reason || null;
+
+    // 1. Determine main order table status
+    let resolvedOrderStatus = currentOrder.order_status || "pending";
+    const lowerProgress = resolvedProgressStatus.toLowerCase();
+    if (lowerProgress.includes("deliver") || lowerProgress.includes("complete")) {
+      resolvedOrderStatus = "complete";
+    } else if (lowerProgress.includes("dispatch") || lowerProgress.includes("transit") || lowerProgress.includes("ship")) {
+      resolvedOrderStatus = "dispatched";
+    } else if (lowerProgress.includes("cancel") || lowerProgress.includes("error") || lowerProgress.includes("reject")) {
+      resolvedOrderStatus = "cancel";
+    } else if (lowerProgress.includes("process") || lowerProgress.includes("pack") || lowerProgress.includes("confirm")) {
+      resolvedOrderStatus = "pending";
+    } else if (orderStatus) {
+      resolvedOrderStatus = orderStatus;
+    }
+
+    // 2. Update orders table
+    let orderUpdateFields = [`order_status = ?`];
+    let orderUpdateValues = [resolvedOrderStatus];
+
+    if (resolvedPaymentStatus) {
+      orderUpdateFields.push(`status = ?`);
+      orderUpdateValues.push(resolvedPaymentStatus);
+    }
+    if (totalPrice !== undefined && totalPrice !== null) {
+      orderUpdateFields.push(`totalPrice = ?`);
+      orderUpdateValues.push(totalPrice);
+    }
+    if (paymentMethod) {
+      orderUpdateFields.push(`paymentMethod = ?`);
+      orderUpdateValues.push(paymentMethod);
+    }
+    if (resolvedCancelReason) {
+      orderUpdateFields.push(`cancel_reason = ?`);
+      orderUpdateValues.push(resolvedCancelReason);
+    }
+
+    orderUpdateValues.push(orderId);
+    await db.query(`UPDATE orders SET ${orderUpdateFields.join(", ")} WHERE id = ?`, orderUpdateValues);
+
+    // 3. Update or initialize order_tracking table
+    const [trackingRows] = await db.query(`SELECT status FROM order_tracking WHERE order_id = ?`, [orderId]);
+
+    let trackingTimeline = [];
+    if (trackingRows.length > 0 && trackingRows[0].status) {
+      try {
+        trackingTimeline = typeof trackingRows[0].status === "string" ? JSON.parse(trackingRows[0].status) : trackingRows[0].status;
+      } catch (e) {
+        trackingTimeline = [];
+      }
+    }
+
+    if (!Array.isArray(trackingTimeline) || trackingTimeline.length === 0) {
+      trackingTimeline = [
+        { name: "Order Placed", status: "completed", date: currentDate },
+        { name: "Processing & Packaging", status: "processing", date: currentDate },
+        { name: "Dispatched & In Transit", status: "pending", date: currentDate },
+        { name: "Delivered", status: "pending", date: currentDate },
+      ];
+    }
+
+    const isDelivered = resolvedOrderStatus === "complete" || lowerProgress.includes("deliver");
+    const isDispatched = resolvedOrderStatus === "dispatched" || lowerProgress.includes("dispatch") || lowerProgress.includes("ship");
+    const isCancelled = resolvedOrderStatus === "cancel" || lowerProgress.includes("cancel") || status === "error";
+
+    trackingTimeline = trackingTimeline.map((step) => {
+      const stepName = (step.name || "").toLowerCase();
+      if (isCancelled) {
+        return { ...step, status: "error", date: currentDate };
+      }
+      if (stepName.includes("placed")) {
+        return { ...step, status: "completed", date: step.date || currentDate };
+      }
+      if (stepName.includes("process") || stepName.includes("pack")) {
+        return { ...step, status: isDelivered || isDispatched ? "completed" : "processing", date: currentDate };
+      }
+      if (stepName.includes("dispatch") || stepName.includes("transit") || stepName.includes("ship")) {
+        return { ...step, status: isDelivered ? "completed" : (isDispatched ? "processing" : "pending"), date: currentDate };
+      }
+      if (stepName.includes("deliver")) {
+        return { ...step, status: isDelivered ? "completed" : "pending", date: currentDate };
+      }
+      return step;
+    });
+
+    if (trackingRows.length > 0) {
+      await db.query(
+        `UPDATE order_tracking SET status = ?, order_progress_status = ? WHERE order_id = ?`,
+        [JSON.stringify(trackingTimeline), resolvedProgressStatus, orderId]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO order_tracking (order_id, status, order_progress_status) VALUES (?, ?, ?)`,
+        [orderId, JSON.stringify(trackingTimeline), resolvedProgressStatus]
+      );
+    }
+
+    // 4. Send Notifications
+    try {
+      if (currentOrder.userId) {
+        await sendNotificationToUser(
+          "Order Update",
+          `Hello! Your order status has changed to ${resolvedProgressStatus}. Track your order 📱`,
+          currentOrder.userId
+        );
+        await sendUserNotification(
+          currentOrder.userId,
+          "Order Update",
+          `Hello! Your order status has changed to ${resolvedProgressStatus}. Track your order 📱`
+        );
+      }
+    } catch (nErr) {
+      console.warn("Notification notice:", nErr.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Order status updated to ${resolvedOrderStatus} and tracking step set to ${resolvedProgressStatus}.`,
+      data: {
+        orderId: Number(orderId),
+        orderStatus: resolvedOrderStatus,
+        order_progress_status: resolvedProgressStatus,
+        trackingStatus: trackingTimeline,
+      },
+    });
   } catch (err) {
-    console.error(err);
-    return res
-      .status(500)
-      .json({ message: "Error updating the status or order progress status." });
+    console.error("Error in statusUpdate:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Error updating order status.",
+      error: err.message,
+    });
   }
 };
 

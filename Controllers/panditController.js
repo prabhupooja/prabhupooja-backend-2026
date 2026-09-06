@@ -4,43 +4,138 @@ const dotenv = require('dotenv');
 const { getIo } = require("../config/panditSoket");
 dotenv.config();
 
+const formatPanditImage = (img) => {
+  if (!img || img === "null" || img === "undefined") return null;
+  const clean = typeof img === "string" ? img.trim() : "";
+  if (!clean || clean === "null" || clean === "undefined") return null;
+  if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("data:")) return clean;
+  const baseUrl = process.env.BACKEND_URL || "https://api.prabhupooja.com";
+  const cleanBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return `${cleanBase}/uploads/${clean.replace(/^\/+/, "")}`;
+};
+
 exports.createPandit = async (req, res) => {
   const {
-    name, mobile, email, gotra, qualification, temple, city, state, country,
-    language, skills, gender, role, experience, price,
+    name, lastname, mobile, phone, email, gotra, qualification, temple, city, state, country,
+    language, skills, speciality, gender, role, experience, price,
   } = req.body;
 
-  console.log(req.body);
+  const panditMobile = mobile || phone;
+  const panditSkills = speciality || skills;
+  const panditRole = role || 1;
 
-  const gurukulCertificate = req.files?.['gurukulCertificate']?.[0]?.location || null;
-  const aadharCard = req.files?.['aadharCard']?.[0]?.location || null;
-  const panCard = req.files?.['panCard']?.[0]?.location || null;
-  const profileImage = req.files?.['profileImage']?.[0]?.location || null;
+  const gurukulCertificate = 
+    req.files?.['gurukulCertificate']?.[0]?.location || 
+    req.files?.['gurukulCertificate']?.[0]?.filename || 
+    req.files?.['gurukul_certificate']?.[0]?.location || 
+    req.files?.['gurukul_certificate']?.[0]?.filename || null;
 
-  // Basic validation (add more as needed)
-  if (!name || !mobile || !email) {
+  const aadharCard = 
+    req.files?.['aadharCard']?.[0]?.location || 
+    req.files?.['aadharCard']?.[0]?.filename || 
+    req.files?.['aadhaar_card']?.[0]?.location || 
+    req.files?.['aadhaar_card']?.[0]?.filename || null;
+
+  const panCard = 
+    req.files?.['panCard']?.[0]?.location || 
+    req.files?.['panCard']?.[0]?.filename || 
+    req.files?.['pan_card']?.[0]?.location || 
+    req.files?.['pan_card']?.[0]?.filename || null;
+
+  const profileImage = 
+    req.files?.['profileImage']?.[0]?.location || 
+    req.files?.['profileImage']?.[0]?.filename || 
+    req.files?.['profile_image']?.[0]?.location || 
+    req.files?.['profile_image']?.[0]?.filename || 
+    req.files?.['image']?.[0]?.location || 
+    req.files?.['image']?.[0]?.filename || null;
+
+  // Basic validation
+  if (!name || !panditMobile || !email) {
     return res.status(400).send({ success: false, message: "Name, mobile, and email are required" });
   }
 
   try {
-    // Insert new Pandit record
+    const [existing] = await db.query(
+      `SELECT id, mobile, email, verified FROM pandit WHERE mobile = ? OR email = ?`,
+      [panditMobile, email]
+    );
+
+    if (existing.length > 0) {
+      return res.status(409).send({
+        success: false,
+        message: "An account with this mobile number or email already exists",
+        pandit_id: existing[0].id,
+        verified: existing[0].verified,
+      });
+    }
+
+    // Insert new Pandit record with verified = 0, status = 'pending'
     const [insertResult] = await db.query(
-      `INSERT INTO pandit (name, mobile, email, gotra, qualification, language, skills, 
+      `INSERT INTO pandit (name, lastname, mobile, email, gotra, qualification, language, skills, speciality,
        gender, gurukulCertificate, aadharCard, panCard, temple, city, state, country, 
-       verified, profileImage, role, experience, price, form) VALUES (?, ?, ?, ?, ?, ?, ?, 
-       ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 1)`,
-      [name, mobile, email, gotra, qualification, language, skills, gender, gurukulCertificate,
-        aadharCard, panCard, temple, city, state, country, profileImage, role, experience, price]
+       verified, status, profileImage, role, experience, price, form) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 
+       ?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, ?, ?, 1)`,
+      [
+        name, lastname || null, panditMobile, email, gotra || null, qualification || null,
+        language || null, panditSkills || null, panditSkills || null, gender || null,
+        gurukulCertificate, aadharCard, panCard, temple || null, city || null, state || null, country || 'India',
+        profileImage, panditRole, experience || null, price || null
+      ]
     );
 
     if (insertResult.affectedRows === 0) {
       return res.status(500).send({ success: false, message: "Failed to create pandit record" });
     }
 
+    const panditId = insertResult.insertId;
+
+    // Initialize pandit_status
+    await db.query(
+      `INSERT INTO pandit_status (pandit_id, status, chat_mode) VALUES (?, 0, 0)
+       ON DUPLICATE KEY UPDATE status = 0`,
+      [panditId]
+    );
+
+    // Send admin notification email
+    try {
+      const adminTransporter = nodemailer.createTransport({
+        service: "Gmail",
+        auth: {
+          user: process.env.email,
+          pass: process.env.pass,
+        },
+      });
+      const mailOptions = {
+        from: process.env.email,
+        to: "birtharedivakar1990@gmail.com",
+        subject: "New Pandit Registration - Verification Required",
+        html: `
+          <p>Dear Admin,</p>
+          <p>A new Pandit <strong>${name} ${lastname || ''}</strong> has registered on Prabhu Pooja.</p>
+          <p><strong>Mobile:</strong> ${panditMobile}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>City/State:</strong> ${city || ''}, ${state || ''}</p>
+          <p>Please review and verify the profile in the admin panel.</p>
+          <p>🙏 Regards,<br/>Prabhu Pooja System</p>
+        `,
+      };
+      adminTransporter.sendMail(mailOptions, (err) => {
+        if (err) console.warn("Admin mail notice:", err.message);
+      });
+    } catch (mErr) {
+      console.warn("Mail error on pandit register:", mErr.message);
+    }
+
     return res.status(201).send({
       success: true,
-      message: "Pandit record created successfully",
-      data: { id: insertResult.insertId }, // Return the new ID if needed
+      message: "Pandit registered successfully. Your profile is under verification review by Admin.",
+      data: {
+        id: panditId,
+        verified: 0,
+        status: "pending",
+        message: "Verification under review by Admin",
+      },
     });
 
   } catch (error) {
@@ -48,7 +143,90 @@ exports.createPandit = async (req, res) => {
     return res.status(500).send({
       success: false,
       message: 'Internal server error',
+      error: error.message,
     });
+  }
+};
+
+exports.getPanditProfile = async (req, res) => {
+  const panditId = req.user?.id || req.query.panditId;
+
+  if (!panditId) {
+    return res.status(401).send({ success: false, message: "Unauthorized access" });
+  }
+
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.id = ?
+    `, [panditId]);
+
+    if (rows.length === 0) {
+      return res.status(404).send({ success: false, message: "Pandit not found" });
+    }
+
+    const pandit = rows[0];
+    const isVerified = pandit.verified === 1;
+    const currentStatus = isVerified ? "approved" : (pandit.rejected === 1 ? "rejected" : "pending");
+
+    return res.status(200).send({
+      success: true,
+      verified: pandit.verified || 0,
+      status: currentStatus,
+      message: isVerified ? "Pandit profile active" : "Verification under review by Admin",
+      data: {
+        ...pandit,
+        profileImage: formatPanditImage(pandit.profileImage),
+        gurukulCertificate: formatPanditImage(pandit.gurukulCertificate),
+        aadharCard: formatPanditImage(pandit.aadharCard),
+        panCard: formatPanditImage(pandit.panCard),
+      },
+    });
+  } catch (error) {
+    console.error("Error in getPanditProfile:", error);
+    return res.status(500).send({ success: false, message: "Internal server error", error: error.message });
+  }
+};
+
+exports.checkPanditStatus = async (req, res) => {
+  const panditId = req.params.panditId || req.user?.id || req.query.panditId;
+
+  if (!panditId) {
+    return res.status(400).send({ success: false, message: "Pandit ID is required" });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT id, name, lastname, email, mobile, verified, rejected, rejection_reason, status FROM pandit WHERE id = ?`,
+      [panditId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).send({ success: false, message: "Pandit not found" });
+    }
+
+    const pandit = rows[0];
+    const isVerified = pandit.verified === 1;
+    const currentStatus = isVerified ? "approved" : (pandit.rejected === 1 ? "rejected" : "pending");
+
+    return res.status(200).send({
+      success: true,
+      verified: pandit.verified || 0,
+      status: currentStatus,
+      rejection_reason: pandit.rejection_reason || null,
+      message: isVerified
+        ? "Verified and Approved"
+        : (pandit.rejected === 1 ? "Verification rejected" : "Verification under review by Admin"),
+      data: pandit,
+    });
+  } catch (error) {
+    console.error("Error in checkPanditStatus:", error);
+    return res.status(500).send({ success: false, message: "Internal server error", error: error.message });
   }
 };
 exports.updatePandit = async (req, res) => {
@@ -117,14 +295,25 @@ exports.updatePandit = async (req, res) => {
 };
 exports.getPanditByMobile = async (req, res) => {
   const { mobile } = req.params;
-  console.log("here is the mobile", mobile)
   try {
-    const [existingPandit] = await db.query('SELECT * FROM pandit WHERE mobile = ?', [mobile]);
-    console.log(existingPandit)
-    if (existingPandit.length > 0) {
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.mobile = ?
+    `, [mobile]);
+    if (rows.length > 0) {
+      const p = rows[0];
       return res.status(200).send({
         success: true,
-        data: existingPandit[0],
+        data: {
+          ...p,
+          profileImage: formatPanditImage(p.profileImage),
+          image: formatPanditImage(p.profileImage || p.image),
+        },
       });
     } else {
       return res.status(404).send({
@@ -142,16 +331,25 @@ exports.getPanditByMobile = async (req, res) => {
 };
 exports.getPanditId = async (req, res) => {
   const { id } = req.params;
-  console.log(id)
   try {
-
-    const [existingPandit] = await db.query('SELECT * FROM pandit WHERE id = ?', [id]);
-    console.log("here is the data of id ", existingPandit)
-    console.log("pandit object data", existingPandit[0])
-    if (existingPandit.length > 0) {
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.id = ?
+    `, [id]);
+    if (rows.length > 0) {
+      const p = rows[0];
       return res.status(200).send({
         success: true,
-        data: existingPandit[0],
+        data: {
+          ...p,
+          profileImage: formatPanditImage(p.profileImage),
+          image: formatPanditImage(p.profileImage || p.image),
+        },
       });
     } else {
       return res.status(404).send({
@@ -169,18 +367,32 @@ exports.getPanditId = async (req, res) => {
 };
 exports.get = async (req, res) => {
   try {
-    const data = await db.query(`SELECT * FROM pandit ORDER BY created_at DESC;`);
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      ORDER BY ps.status DESC, p.created_at DESC;
+    `);
 
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "No services found",
       });
     }
 
+    const formatted = rows.map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).send({
       success: true,
-      data: data[0],
+      data: formatted,
     });
   } catch (error) {
     console.error(error);
@@ -192,10 +404,24 @@ exports.get = async (req, res) => {
 };
 exports.getPandit = async (req, res) => {
   try {
-    const [data] = await db.query('SELECT * FROM pandit where role = 1');
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE (p.role = 1 OR p.role = 0 OR p.role IS NULL OR p.role = '')
+      ORDER BY ps.status DESC, p.id DESC
+    `);
+    const formatted = (rows || []).map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
     return res.status(200).send({
       success: true,
-      data: data,
+      data: formatted,
     });
   } catch (error) {
     console.error('Error fetching pandit data:', error);
@@ -207,20 +433,33 @@ exports.getPandit = async (req, res) => {
 };
 exports.getMahurat = async (req, res) => {
   try {
-    console.log('Executing query...');
-    const [data] = await db.query('SELECT * FROM pandit WHERE role = 3');
-    console.log('Query Result:', data);
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.role = 3
+      ORDER BY ps.status DESC, p.id DESC
+    `);
 
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "No pandit found",
       });
     }
 
+    const formatted = rows.map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).send({
       success: true,
-      data: data,
+      data: formatted,
     });
   } catch (error) {
     console.error('Error executing query:', error);
@@ -233,20 +472,33 @@ exports.getMahurat = async (req, res) => {
 
 exports.getVerifiedMahurat = async (req, res) => {
   try {
-    console.log('Executing query...');
-    const [data] = await db.query('SELECT * FROM pandit WHERE role = 3 AND verified = 1');
-    console.log('Query Result:', data);
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.role = 3 AND p.verified = 1
+      ORDER BY ps.status DESC, p.id DESC
+    `);
 
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "No pandit found",
       });
     }
 
+    const formatted = rows.map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).send({
       success: true,
-      data: data,
+      data: formatted,
     });
   } catch (error) {
     console.error('Error executing query:', error);
@@ -259,11 +511,9 @@ exports.getVerifiedMahurat = async (req, res) => {
 
 exports.getRejectedMahurat = async (req, res) => {
   try {
-    console.log('Executing query...');
-    const [data] = await db.query('SELECT * FROM pandit WHERE role = 3 AND verified = 0');
-    console.log('Query Result:', data);
+    const [rows] = await db.query('SELECT * FROM pandit WHERE role = 3 AND verified = 0');
 
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "No pandit found",
@@ -272,7 +522,7 @@ exports.getRejectedMahurat = async (req, res) => {
 
     return res.status(200).send({
       success: true,
-      data: data,
+      data: rows,
     });
   } catch (error) {
     console.error('Error executing query:', error);
@@ -315,20 +565,33 @@ exports.getMahuratId = async (req, res) => {
 };
 exports.getAstrologer = async (req, res) => {
   try {
-    console.log('Executing query...');
-    const [data] = await db.query('SELECT * FROM pandit WHERE role = 2');
-    console.log('Query Result:', data);
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.role = 2
+      ORDER BY ps.status DESC, p.id DESC
+    `);
 
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "No astrologers found",
       });
     }
 
+    const formatted = rows.map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).send({
       success: true,
-      data: data,
+      data: formatted,
     });
   } catch (error) {
     console.error('Error executing query:', error);
@@ -339,26 +602,34 @@ exports.getAstrologer = async (req, res) => {
   }
 };
 exports.getAstrologerById = async (req, res) => {
-  const { id } = req.params; // Get the id from the request parameters
+  const { id } = req.params;
 
   try {
-    console.log('Executing query for astrologer ID:', id);
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.id = ? AND p.role = 2
+    `, [id]);
 
-    // Query to fetch astrologer data based on ID
-    const [data] = await db.query('SELECT * FROM pandit WHERE id = ? AND role = 2', [id]);
-
-    console.log('Query Result:', data);
-
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "Astrologer not found",
       });
     }
 
+    const p = rows[0];
     return res.status(200).send({
       success: true,
-      data: data[0], // Return only the first result as ID is unique
+      data: {
+        ...p,
+        profileImage: formatPanditImage(p.profileImage),
+        image: formatPanditImage(p.profileImage || p.image),
+      },
     });
   } catch (error) {
     console.error('Error executing query:', error);
@@ -371,20 +642,33 @@ exports.getAstrologerById = async (req, res) => {
 
 exports.getVerifiedAstrologers = async (req, res) => {
   try {
-    console.log('Executing query for verified astrologers...');
-    const [data] = await db.query('SELECT * FROM pandit WHERE role = 2 AND verified = 1');
-    console.log('Query Result for verified astrologers:', data);
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.role = 2 AND p.verified = 1
+      ORDER BY ps.status DESC, p.id DESC
+    `);
 
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "No verified astrologers found",
       });
     }
 
+    const formatted = rows.map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).send({
       success: true,
-      data: data,
+      data: formatted,
     });
   } catch (error) {
     console.error('Error executing query for verified astrologers:', error);
@@ -397,11 +681,9 @@ exports.getVerifiedAstrologers = async (req, res) => {
 
 exports.getRejectedAstrologers = async (req, res) => {
   try {
-    console.log('Executing query for rejected astrologers...');
-    const [data] = await db.query('SELECT * FROM pandit WHERE role = 2 AND verified = 0');
-    console.log('Query Result for rejected astrologers:', data);
+    const [rows] = await db.query('SELECT * FROM pandit WHERE role = 2 AND verified = 0');
 
-    if (!data || data.length === 0) {
+    if (!rows || rows.length === 0) {
       return res.status(404).send({
         success: false,
         message: "No rejected astrologers found",
@@ -410,7 +692,7 @@ exports.getRejectedAstrologers = async (req, res) => {
 
     return res.status(200).send({
       success: true,
-      data: data,
+      data: rows,
     });
   } catch (error) {
     console.error('Error executing query for rejected astrologers:', error);
@@ -439,25 +721,25 @@ exports.verifyPandit = async (req, res) => {
     if (existingPandit.length > 0) {
       const pandit = existingPandit[0];
 
-      if (pandit.rejected === 1) {
-        await db.query('UPDATE pandit SET verified = 1, rejected = 0 WHERE id = ?', [id]);
-      } else {
-        await db.query('UPDATE pandit SET verified = 1 WHERE id = ?', [id]);
-      }
+      await db.query('UPDATE pandit SET verified = 1, status = "approved", rejected = 0, rejection_reason = NULL WHERE id = ?', [id]);
 
       // Send Email
       const mailOptions = {
         from: process.env.email,
         to: pandit.email,
-        subject: 'Profile Verification Successful',
-        text: `Dear ${pandit.name},\n\nYour profile has been verified successfully!\n\nBest regards,\nTeam`,
+        subject: 'Profile Verification Successful - Welcome to Prabhu Pooja',
+        text: `Dear ${pandit.name},\n\nCongratulations! Your profile has been verified and approved by the Prabhu Pooja team. You can now log in to the Pandit Dashboard and manage your bookings, consultations, and devotees.\n\nBest regards,\nTeam Prabhu Pooja`,
       };
 
-      await transporter.sendMail(mailOptions);
+      try {
+        await transporter.sendMail(mailOptions);
+      } catch (mErr) {
+        console.warn("Mail error on verify:", mErr.message);
+      }
 
       return res.status(200).send({
         success: true,
-        message: 'Pandit verified successfully',
+        message: 'Pandit verified and approved successfully',
       });
     } else {
       return res.status(404).send({
@@ -519,24 +801,33 @@ exports.rejectPandit = async (req, res) => {
 
 exports.getVerifiedPandit = async (req, res) => {
   try {
-    const data = await db.query(`SELECT * FROM pandit where verified = 1 AND role = 1 `);
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.verified = 1 AND (p.role = 1 OR p.role = 0 OR p.role IS NULL OR p.role = '')
+      ORDER BY ps.status DESC, p.id DESC
+    `);
 
-    if (!data || data.length === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "No services found",
-      });
-    }
+    const formatted = (rows || []).map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
 
     return res.status(200).send({
       success: true,
-      data: data[0],
+      data: formatted,
     });
   } catch (error) {
-    console.error(error);
+    console.error('Error in getVerifiedPandit:', error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+      error: error.message,
     });
   }
 };
@@ -568,10 +859,8 @@ exports.getRejectedPandit = async (req, res) => {
 
 exports.searchPandit = async (req, res) => {
   try {
-    console.log("In searchPandit function");
     const { query } = req.query;
 
-    // Validate that the query parameter is provided
     if (!query) {
       return res.status(400).json({
         success: false,
@@ -581,31 +870,40 @@ exports.searchPandit = async (req, res) => {
 
     const searchQuery = `%${query}%`;
 
-    const [astrologers] = await db.query(
-      "SELECT * FROM pandit WHERE name LIKE ? AND role = 1 AND verified=1;",
-      [searchQuery]
-    );
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.name LIKE ? AND (p.role = 1 OR p.role = 0 OR p.role IS NULL OR p.role = '') AND p.verified = 1
+      ORDER BY ps.status DESC, p.id DESC
+    `, [searchQuery]);
 
-    // Return the results
+    const formatted = (rows || []).map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).json({
       success: true,
-      data: astrologers,
+      data: formatted,
     });
   } catch (error) {
-    console.error("Error searching astrologers:", error);
+    console.error("Error searching pandits:", error);
     return res.status(500).json({
       success: false,
-      message: "An error occurred while searching for astrologers.",
+      message: "An error occurred while searching for pandits.",
     });
   }
 };
 
 exports.searchAstro = async (req, res) => {
   try {
-    console.log("In searchPandit function");
     const { query } = req.query;
 
-    // Validate that the query parameter is provided
     if (!query) {
       return res.status(400).json({
         success: false,
@@ -615,15 +913,26 @@ exports.searchAstro = async (req, res) => {
 
     const searchQuery = `%${query}%`;
 
-    const [astrologers] = await db.query(
-      "SELECT * FROM pandit WHERE name LIKE ? AND role = 2 AND verified=1;",
-      [searchQuery]
-    );
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.name LIKE ? AND p.role = 2 AND p.verified = 1
+      ORDER BY ps.status DESC, p.id DESC
+    `, [searchQuery]);
 
-    // Return the results
+    const formatted = (rows || []).map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).json({
       success: true,
-      data: astrologers,
+      data: formatted,
     });
   } catch (error) {
     console.error("Error searching astrologers:", error);
@@ -635,10 +944,8 @@ exports.searchAstro = async (req, res) => {
 };
 exports.searchMuhurat = async (req, res) => {
   try {
-    console.log("In searchPandit function");
     const { query } = req.query;
 
-    // Validate that the query parameter is provided
     if (!query) {
       return res.status(400).json({
         success: false,
@@ -648,21 +955,32 @@ exports.searchMuhurat = async (req, res) => {
 
     const searchQuery = `%${query}%`;
 
-    const [astrologers] = await db.query(
-      "SELECT * FROM pandit WHERE name LIKE ? AND role = 3 AND verified=1;",
-      [searchQuery]
-    );
+    const [rows] = await db.query(`
+      SELECT 
+        p.*,
+        COALESCE(ps.status, 0) AS is_online,
+        COALESCE(ps.chat_mode, 0) AS chat_mode
+      FROM pandit p
+      LEFT JOIN pandit_status ps ON p.id = ps.pandit_id
+      WHERE p.name LIKE ? AND p.role = 3 AND p.verified = 1
+      ORDER BY ps.status DESC, p.id DESC
+    `, [searchQuery]);
 
-    // Return the results
+    const formatted = (rows || []).map((p) => ({
+      ...p,
+      profileImage: formatPanditImage(p.profileImage),
+      image: formatPanditImage(p.profileImage || p.image),
+    }));
+
     return res.status(200).json({
       success: true,
-      data: astrologers,
+      data: formatted,
     });
   } catch (error) {
-    console.error("Error searching astrologers:", error);
+    console.error("Error searching muhurat pandits:", error);
     return res.status(500).json({
       success: false,
-      message: "An error occurred while searching for astrologers.",
+      message: "An error occurred while searching for muhurat pandits.",
     });
   }
 };

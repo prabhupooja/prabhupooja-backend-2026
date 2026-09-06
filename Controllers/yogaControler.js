@@ -49,32 +49,47 @@ exports.getUserById = async (req, res) => {
         if (!userId) {
             return res.status(400).send({
                 success: false,
-                message: 'User ID is required'
+                message: 'User ID is required',
+                count: 0,
+                data: []
             });
         }
 
         const query = `
           SELECT 
-            y.*,
+            y.id,
+            y.user_id,
+            y.payment_id,
+            y.amount,
+            y.booking_date,
+            y.booking_date AS session_date,
+            y.time_slot,
+            y.time_slot AS session_time,
+            COALESCE(y.notes, 'Vedic Pranayama & Chakra Healing') AS session_name,
+            COALESCE(y.status, 'active') AS status,
+            CONCAT('https://meet.prabhupooja.com/yoga-', y.id) AS session_url,
             p.name AS instructor_name,
             p.mobile AS instructor_mobile,
             p.profileImage AS instructor_image
           FROM yoga_users y
           LEFT JOIN pandit p ON y.assigned_pandit_id = p.id
           WHERE y.user_id = ?
+          ORDER BY y.id DESC
         `;
         const [userData] = await db.query(query, [userId]);
 
         return res.status(200).send({
             success: true,
-            count: userData.length,
-            data: userData
+            count: userData ? userData.length : 0,
+            data: userData || []
         });
 
     } catch (error) {
         console.error('Error fetching user details:', error.message);
         return res.status(500).send({
             success: false,
+            count: 0,
+            data: [],
             message: 'Internal server error'
         });
     }

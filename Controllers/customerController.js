@@ -642,8 +642,18 @@ exports.verifyOtp = async (req, res) => {
     return res.status(500).send({ error: "Internal server error" });
   }
 };
+const formatUserImage = (img) => {
+  if (!img || img === "null" || img === "undefined") return null;
+  const clean = typeof img === "string" ? img.trim() : "";
+  if (!clean || clean === "null" || clean === "undefined") return null;
+  if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("data:")) return clean;
+  const baseUrl = process.env.BACKEND_URL || "https://api.prabhupooja.com";
+  const cleanBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return `${cleanBase}/uploads/${clean.replace(/^\/+/, "")}`;
+};
+
 exports.update = async (req, res) => {
-  const { id } = req.params;
+  const id = req.params.id || req.params.userId || req.user?.id;
   const {
     name,
     email,
@@ -658,6 +668,13 @@ exports.update = async (req, res) => {
   } = req.body;
 
   try {
+    if (!id) {
+      return res.status(400).send({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+
     // 🔹 Get Existing User Data
     const [existingUserRows] = await db.query(
       `SELECT * FROM users WHERE id = ?`,
@@ -675,16 +692,16 @@ exports.update = async (req, res) => {
 
     // 🔹 Preserve Old Values If New Value Is Undefined
     const updatedData = {
-      name: name ?? existingUser.name,
-      email: email ?? existingUser.email,
-      mobile: mobile ?? existingUser.mobile,
-      city: city ?? existingUser.city,
-      country: country ?? existingUser.country,
-      address: address ?? existingUser.address,
-      lastname: lastname ?? existingUser.lastname,
-      state: state ?? existingUser.state,
-      postalCode: postalCode ?? existingUser.postalCode,
-      gender: gender ?? existingUser.gender,
+      name: name !== undefined ? name : existingUser.name,
+      email: email !== undefined ? email : existingUser.email,
+      mobile: mobile !== undefined ? mobile : existingUser.mobile,
+      city: city !== undefined ? city : existingUser.city,
+      country: country !== undefined ? country : existingUser.country,
+      address: address !== undefined ? address : existingUser.address,
+      lastname: lastname !== undefined ? lastname : existingUser.lastname,
+      state: state !== undefined ? state : existingUser.state,
+      postalCode: postalCode !== undefined ? postalCode : existingUser.postalCode,
+      gender: gender !== undefined ? gender : existingUser.gender,
     };
 
     // 🔹 Update Query
@@ -707,32 +724,50 @@ exports.update = async (req, res) => {
       id,
     ];
 
-    const [result] = await db.query(updateQuery, updateParams);
+    await db.query(updateQuery, updateParams);
 
-    if (result.affectedRows === 0) {
-      return res.status(400).send({
-        success: false,
-        message: "No changes were made",
-      });
-    }
+    const [refetched] = await db.query("SELECT * FROM users WHERE id = ?", [id]);
+    const formattedUser = refetched.length > 0 ? {
+      ...refetched[0],
+      balance: parseFloat(refetched[0].balance || 0),
+      image: formatUserImage(refetched[0].image),
+    } : null;
 
     return res.status(200).send({
       success: true,
-      message: "User details updated successfully",
+      message: "Profile updated successfully",
+      data: formattedUser,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in update profile:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+      error: error.message,
     });
   }
 };
+
 exports.updateProfilePicture = async (req, res) => {
-  const { id } = req.params;
-  const image = req.file ? req.file.location : null; 
+  const id = req.params.id || req.params.userId || req.user?.id;
+  
+  // Extract image from any possible upload field
+  const uploadedFile = 
+    req.files?.['profileImage']?.[0] ||
+    req.files?.['image']?.[0] ||
+    req.files?.['file']?.[0] ||
+    req.file;
+
+  const image = uploadedFile?.location || uploadedFile?.filename || req.body.profileImage || req.body.image;
 
   try {
+    if (!id) {
+      return res.status(400).send({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+
     if (!image) {
       return res.status(400).send({
         success: false,
@@ -752,31 +787,34 @@ exports.updateProfilePicture = async (req, res) => {
     }
 
     const updateQuery = `UPDATE users SET image = ? WHERE id = ?`;
-    const [result] = await db.query(updateQuery, [image, id]);
+    await db.query(updateQuery, [image, id]);
 
-    if (result.affectedRows === 0) {
-      return res.status(400).send({
-        success: false,
-        message: "No changes were made",
-      });
-    }
+    const finalImageUrl = formatUserImage(image);
 
     return res.status(200).send({
       success: true,
       message: "Profile picture updated successfully",
-      image: image,
+      image: finalImageUrl,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in updateProfilePicture:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+      error: error.message,
     });
   }
 };
+
 exports.updateProfilePictureAdmin = async (req, res) => {
-  const { id } = req.params;
-  const image = req.file ? req.file.location : null;
+  const id = req.params.id || req.params.userId;
+  const uploadedFile = 
+    req.files?.['profileImage']?.[0] ||
+    req.files?.['image']?.[0] ||
+    req.files?.['file']?.[0] ||
+    req.file;
+
+  const image = uploadedFile?.location || uploadedFile?.filename || req.body.profileImage || req.body.image;
 
   try {
     if (!image) {
@@ -798,28 +836,25 @@ exports.updateProfilePictureAdmin = async (req, res) => {
     }
 
     const updateQuery = `UPDATE users SET image = ? WHERE id = ?`;
-    const [result] = await db.query(updateQuery, [image, id]);
+    await db.query(updateQuery, [image, id]);
 
-    if (result.affectedRows === 0) {
-      return res.status(400).send({
-        success: false,
-        message: "No changes were made",
-      });
-    }
+    const finalImageUrl = formatUserImage(image);
 
     return res.status(200).send({
       success: true,
       message: "Profile picture updated successfully",
-      image: image,
+      image: finalImageUrl,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in updateProfilePictureAdmin:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+      error: error.message,
     });
   }
 };
+
 exports.getUserBalance = async (req, res) => {
   const { id } = req.params;
   try {
@@ -976,7 +1011,7 @@ exports.protected = (req, res) => {
 };
 exports.getUserByToken = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id;
     if (!userId) {
       return res.status(401).send({
         success: false,
@@ -995,17 +1030,40 @@ exports.getUserByToken = async (req, res) => {
       });
     }
 
+    const rawUser = userResult[0];
+    const formattedUser = {
+      id: rawUser.id,
+      name: rawUser.name || "",
+      lastname: rawUser.lastname || "",
+      mobile: rawUser.mobile || "",
+      email: rawUser.email || "",
+      gender: rawUser.gender || "",
+      image: formatUserImage(rawUser.image),
+      profileImage: formatUserImage(rawUser.image),
+      balance: parseFloat(rawUser.balance || 0),
+      member: rawUser.member || 0,
+      membershipBalance: parseFloat(rawUser.membershipBalance || 0),
+      address: rawUser.address || "",
+      city: rawUser.city || "",
+      state: rawUser.state || "",
+      postalCode: rawUser.postalCode || "",
+      country: rawUser.country || "India",
+      role: rawUser.role,
+      uuid: rawUser.uuid,
+      created_at: rawUser.created_at,
+    };
+
     return res.status(200).send({
       success: true,
       message: "User record retrieved successfully",
-      data: userResult[0],
+      data: formattedUser,
     });
   } catch (error) {
     console.error("Error in getUserByToken function:", error);
     return res.status(500).send({
       success: false,
       message: "Error in fetching user data",
-      error,
+      error: error.message,
     });
   }
 };
@@ -1083,53 +1141,59 @@ exports.getUserTickets = async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
-      return res.status(404).send({
+      return res.status(400).send({
         success: false,
-        message: "user not found",
+        message: "User ID is required",
+        data: [],
       });
     }
 
     const [tickets] = await db.query(
-      "SELECT * FROM user_support_ticket WHERE user_id = ?",
+      "SELECT * FROM user_support_ticket WHERE user_id = ? ORDER BY submitted_date DESC",
       [userId]
     );
-
-    if (tickets.length === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "No tickets found for this user",
-        tickets: [],
-      });
-    }
 
     return res.status(200).send({
       success: true,
       message: "Tickets retrieved successfully",
-      data: tickets,
+      data: tickets || [],
     });
   } catch (error) {
     console.error("Error in getUserTickets function:", error);
     return res.status(500).send({
       success: false,
       message: "Error in fetching tickets",
-      error,
+      data: [],
+      error: error.message,
     });
   }
 };
 exports.ticketCreate = async (req, res) => {
-  const { issue_type, description, user_id } = req.body;
+  const { issue_type, description, user_id, email, phone } = req.body;
 
   try {
     if (!issue_type || !description || !user_id) {
       return res.status(400).send({
         success: false,
-        message: "Please provide all details",
+        message: "Please provide all required details (issue_type, description, user_id)",
       });
     }
+
+    // Fetch user details if email/phone not provided
+    let userEmail = email;
+    let userPhone = phone;
+    if (!userEmail || !userPhone) {
+      const [uRows] = await db.query("SELECT email, mobile FROM users WHERE id = ?", [user_id]);
+      if (uRows.length > 0) {
+        userEmail = userEmail || uRows[0].email;
+        userPhone = userPhone || uRows[0].mobile;
+      }
+    }
+
     const [insertResult] = await db.query(
-      `INSERT INTO user_support_ticket (issue_type, submitted_date, description, user_id)
-       VALUES (?, NOW(), ?,?)`,
-      [issue_type, description, user_id]
+      `INSERT INTO user_support_ticket (issue_type, submitted_date, description, user_id, email, phone, status, response)
+       VALUES (?, NOW(), ?, ?, ?, ?, 'Pending', 'Your ticket is under review with Devotee Care team.')`,
+      [issue_type, description, user_id, userEmail || null, userPhone || null]
     );
 
     const insertId = insertResult.insertId;
@@ -1141,16 +1205,26 @@ exports.ticketCreate = async (req, res) => {
       });
     }
 
-    const ticket_id = `PBTKC${String(insertId).padStart(2, "0")}`;
+    const ticket_id = `PBTKC${String(insertId).padStart(5, "0")}`;
 
     await db.query(
       `UPDATE user_support_ticket SET ticket_id = ? WHERE id = ?`,
       [ticket_id, insertId]
     );
 
-    return res.status(200).send({
+    return res.status(201).send({
       success: true,
-      message: "Ticket created successfully",
+      message: "Support ticket created successfully",
+      ticket_id: ticket_id,
+      data: {
+        id: insertId,
+        ticket_id: ticket_id,
+        issue_type: issue_type,
+        status: "Pending",
+        submitted_date: new Date(),
+        description: description,
+        response: "Your ticket is under review with Devotee Care team."
+      }
     });
   } catch (err) {
     console.error("Error in ticketCreate function:", err);

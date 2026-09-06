@@ -34,4 +34,5 @@ router.get('/getid/:id',problem.getByProblemId);
 router.post('/booking',verifyToken,problem.bookingPooja);
 router.get('/getbookingdate/:pooja_id/:user_id',AdminverifyToken,problem.getBookingDate);
 router.get('/getbooking/:userId',verifyToken,problem.getbookingbyid);
+router.get('/getbookings/:userId',verifyToken,problem.getbookingbyid);
 module.exports = router;
