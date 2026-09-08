@@ -115,6 +115,8 @@ app.use('/api/v1/newsletter', require('./Routes/newletterRouter'));
 app.use('/api/v1/blog', require('./Routes/blogRoutes'));
 app.use('/api/v1/problem', require('./Routes/problemRoutes'));
 app.use('/api/v1/banner',require('./Routes/bannerRoutes'));
+app.use('/api/v1/ecommerce-banner', require('./Routes/ecommerceBannerRoutes'));
+app.use('/api/v1/ecommerce_banner', require('./Routes/ecommerceBannerRoutes'));
 app.use('/api/v1/footer',require('./Routes/footerRoutes'));
 app.use('/api/v1/category',require('./Routes/categoryRoutes'));
 app.use('/api/v1/tinyblog',require('./Routes/tinyRoutes'));
@@ -137,6 +139,7 @@ app.use("/onlinepuja", require("./Routes/onlinePujaRoutes"));
 app.use("/temple", require("./Routes/templeRoutes"));
 app.use("/yoga", require("./Routes/yogaRoutes"));
 app.use("/events", require("./Routes/eventRoutes"));
+app.use("/ecommerce-banner", require("./Routes/ecommerceBannerRoutes"));
 
 app.use(express.static(path.join(__dirname, 'public')));
 

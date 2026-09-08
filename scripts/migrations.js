@@ -223,6 +223,25 @@ async function runMigrations() {
       console.warn("Note on enquiry table migration:", eqErr.message);
     }
 
+    // 11. Ensure ecommerce_banner table exists
+    try {
+      const createEcommerceBannerTable = `
+        CREATE TABLE IF NOT EXISTS ecommerce_banner (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          title VARCHAR(255) NULL,
+          image VARCHAR(500) NOT NULL,
+          redirect_url VARCHAR(500) NULL,
+          status TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+      await db.query(createEcommerceBannerTable);
+      console.log("✅ Table 'ecommerce_banner' checked/created successfully.");
+    } catch (ecomErr) {
+      console.warn("Note on ecommerce_banner table migration:", ecomErr.message);
+    }
+
     console.log("=== MIGRATIONS COMPLETE ===");
     return true;
   } catch (err) {

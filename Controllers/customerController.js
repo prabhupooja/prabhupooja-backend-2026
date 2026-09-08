@@ -23,11 +23,18 @@ exports.register = async (req, res) => {
         message: "Please provide all details",
       });
     }
+    const cleanMobile = String(mobile || "").replace(/\D/g, "").slice(-10);
+    if (!cleanMobile || cleanMobile.length !== 10 || !/^[6-9]\d{9}$/.test(cleanMobile)) {
+      return res.status(400).send({
+        success: false,
+        message: "Please provide a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.",
+      });
+    }
     const [existingUser] = await db.query(
       `SELECT mobile, email FROM users WHERE mobile = ? OR email = ? 
        UNION ALL 
        SELECT mobile, email FROM pandit WHERE mobile = ? OR email = ?`,
-      [mobile, email, mobile, email]
+      [cleanMobile, email, cleanMobile, email]
     );
 
     if (existingUser && existingUser.length > 0) {
@@ -40,7 +47,7 @@ exports.register = async (req, res) => {
     if (role === "1") {
       [data] = await db.query(
         `INSERT INTO pandit (name, lastname, mobile, email, role,uuid) VALUES (?, ?, ?, ?, ?,?)`,
-        [name, lastname, mobile, email, role, uuid]
+        [name, lastname, cleanMobile, email, role, uuid]
       );
 
       const panditId = data.insertId;
@@ -80,7 +87,7 @@ exports.register = async (req, res) => {
     } else if (role === "0") {
       [data] = await db.query(
         `INSERT INTO users (name,lastname, mobile, email, role, image,uuid,created_at) VALUES (?,?, ?, ?, ?, ?,?,NOW())`,
-        [name, lastname, mobile, email, role, image, uuid]
+        [name, lastname, cleanMobile, email, role, image, uuid]
       );
 
       const userId = data.insertId;
@@ -325,233 +332,234 @@ const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_
   : null;
 exports.login = async (req, res) => {
   try {
-    const { input } = req.body || {};
+    const rawInput = req.body?.input || req.body?.mobile || req.body?.number || req.body?.phone || req.body?.email || req.body?.contact;
     const otp = generateOTP();
-    console.log(input, "input");
 
-    if (!input) {
-      return res.status(400).send({
+    if (!rawInput || !String(rawInput).trim()) {
+      return res.status(400).json({
         success: false,
-        message: "Either mobile number or email is required"
+        message: "Please enter your mobile number or email address."
       });
     }
-    let formattedMobile;
-    if (/^\d+$/.test(input)) {
-      const phoneNumber = parsePhoneNumberFromString(input, "IN");
-      if (!phoneNumber || !phoneNumber.isValid()) {
-        return res.status(400).send("Invalid phone number format");
-      }
-      formattedMobile = phoneNumber.number;
-    }
+
+    const input = String(rawInput).trim();
+    const isEmail = input.includes("@");
+    let clean10Digit = null;
+    let formattedMobile = null;
 
     let user = null;
+    let isPandit = false;
 
-    if (/^\d+$/.test(input)) {
-      const [usersResult] = await db.query(
-        `SELECT * FROM users WHERE mobile = ?`,
-        [input]
-      );
-      if (usersResult.length > 0) {
-        user = usersResult[0];
+    if (isEmail) {
+      // Validate Email Format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(input)) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid email address format (e.g. user@example.com)."
+        });
       }
-    } else {
+
+      // Check users table
       const [usersResult] = await db.query(
         `SELECT * FROM users WHERE email = ?`,
         [input]
       );
       if (usersResult.length > 0) {
         user = usersResult[0];
-      }
-    }
-
-    if (user) {
-      const token = generateToken(user.id);
-
-      const [updateResult] = await db.query(
-        `UPDATE users SET token = ?, otp = ? WHERE mobile = ? OR email = ?`,
-        [token, otp, input, input]
-      );
-
-      if (updateResult.affectedRows === 0) {
-        return res.status(500).send({ error: "Failed to update OTP for user" });
-      }
-
-      setTimeout(async () => {
-        await db.query(
-          `UPDATE users SET otp = NULL WHERE mobile = ? OR email = ?`,
-          [input, input]
-        );
-      }, 5 * 60 * 1000);
-
-      console.log(`\n========================================\n🔑 LOGIN OTP FOR [${input}]: ${otp}\n========================================\n`);
-
-      if (formattedMobile) {
-        try {
-          if (process.env.TWILIO_PHONE_NUMBER && twilioClient) {
-            await twilioClient.messages.create({
-              body: `Dear user, your OTP for login to Prabhupooja is ${otp}. Please do not share this OTP with anyone.`,
-              from: process.env.TWILIO_PHONE_NUMBER,
-              to: formattedMobile,
-            });
-          }
-        } catch (twilioError) {
-          console.error("Twilio Error:", twilioError.message);
-        }
-
-        return res.status(200).send({
-          success: true,
-          message: `OTP sent to ${input}`,
-          Otp: otp,
-          role: user.role,
-        });
+        isPandit = false;
       } else {
-        try {
-          const transporter = nodemailer.createTransport({
-            service: "gmail",
-            auth: { user: process.env.email, pass: process.env.pass },
-          });
-
-          const mailOptions = {
-            from: process.env.email,
-            to: input,
-            subject: "OTP for Login - Prabhu Pooja",
-            html: `<html>
-  <body style="font-family: Arial, sans-serif; background: #ffffff; margin: 0; padding: 20px; text-align: center;">
-    <div style="max-width: 600px; margin: auto;">
-      <img src="https://prabhupooja.s3.ap-south-1.amazonaws.com/onlinePooja/prabhupooja-logo.png" alt="Prabhu Pooja" height="40" style="margin-bottom: 20px;">
-      <h2 style="color: #000;">OTP Verification</h2>
-      <p style="color: #000;">Your OTP is:</p>
-      <p style="font-size: 24px; font-weight: bold; color: #d84315; margin: 10px 0;">${otp}</p>
-      <p style="font-size: 14px; color: #000;">Valid for 5 minutes. Do not share it.</p>
-      <p style="font-size: 12px; color: #777; margin-top: 30px;">© 2025 Prabhu Pooja</p>
-    </div>
-  </body>
-</html>`,
-          };
-
-          transporter.sendMail(mailOptions, (error, info) => {
-            if (error) {
-              console.warn("⚠️ SMTP Notice (Gmail App Password invalid or expired):", error.message);
-              console.log(`ℹ️ [FALLBACK OTP] Use OTP '${otp}' to login.`);
-            } else {
-              console.log("✅ Email sent successfully to:", input);
-            }
-          });
-        } catch (err) {
-          console.warn("Mail transport error:", err.message);
-        }
-
-        return res.status(200).send({
-          success: true,
-          message: `OTP sent to ${input}`,
-          Otp: otp,
-          role: user.role,
-        });
-      }
-    } else {
-      let pandit = null;
-
-      if (/^\d+$/.test(input)) {
-        const [panditResult] = await db.query(
-          `SELECT * FROM pandit WHERE mobile = ?`,
-          [input]
-        );
-        if (panditResult.length > 0) {
-          pandit = panditResult[0];
-        }
-      } else {
+        // Check pandit table
         const [panditResult] = await db.query(
           `SELECT * FROM pandit WHERE email = ?`,
           [input]
         );
         if (panditResult.length > 0) {
-          pandit = panditResult[0];
+          user = panditResult[0];
+          isPandit = true;
         }
       }
 
-      if (pandit) {
-        const token = generateToken(pandit.id);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "This email address is not registered. Please register first to continue."
+        });
+      }
+    } else {
+      // Mobile Number Validation
+      const digitsOnly = input.replace(/\D/g, "");
 
-        const [updateResult] = await db.query(
-          `UPDATE pandit SET token = ?, otp = ? WHERE mobile = ? OR email = ?`,
-          [token, otp, input, input]
-        );
+      if (digitsOnly.length < 10 || digitsOnly.length > 13) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid 10-digit mobile number."
+        });
+      }
 
-        if (updateResult.affectedRows === 0) {
-          return res
-            .status(500)
-            .send({ error: "Failed to update OTP for pandit" });
-        }
+      clean10Digit = digitsOnly.slice(-10);
 
-        // **OTP Null after 5 Minutes**
-        setTimeout(async () => {
-          await db.query(
-            `UPDATE pandit SET otp = NULL WHERE mobile = ? OR email = ?`,
-            [input, input]
-          );
-        }, 5 * 60 * 1000);
+      // Validate Indian 10-digit mobile number starting digit (6, 7, 8, 9)
+      if (!/^[6-9]\d{9}$/.test(clean10Digit)) {
+        return res.status(400).json({
+          success: false,
+          message: "Please enter a valid 10-digit mobile number starting with 6, 7, 8, or 9."
+        });
+      }
 
-        console.log(`\n========================================\n🔑 PANDIT LOGIN OTP FOR [${input}]: ${otp}\n========================================\n`);
+      formattedMobile = `+91${clean10Digit}`;
 
-        if (formattedMobile) {
-          try {
-            await axios.post("https://api.msg91.com/api/v5/otp", {
-              mobile: formattedMobile,
-              otp,
-              authkey: "429244AwFH2ZM3FNN66d2d451P1",
-              sender: "Prabhupooja",
-              message: `Dear user, your OTP for login to Prabhupooja is ${otp}. Please do not share this OTP with anyone.`,
-            });
-          } catch (smsErr) {
-            console.warn("SMS error:", smsErr.message);
-          }
-          return res.status(200).send({
-            success: true,
-            message: `OTP sent to ${input}`,
-            Otp: otp,
-            role: pandit.role,
-          });
-        } else {
-          try {
-            const transporter = nodemailer.createTransport({
-              service: "gmail",
-              auth: { user: process.env.email, pass: process.env.pass },
-            });
-
-            const mailOptions = {
-              from: process.env.email,
-              to: input,
-              subject: "OTP for Login - Prabhu Pooja",
-              html: `<p>Your OTP for login is: <strong>${otp}</strong></p>`,
-            };
-
-            transporter.sendMail(mailOptions, (error, info) => {
-              if (error) {
-                console.warn("⚠️ SMTP Notice for pandit email:", error.message);
-              }
-            });
-          } catch (err) {
-            console.warn("Pandit mail error:", err.message);
-          }
-
-          return res.status(200).send({
-            success: true,
-            message: `OTP sent to ${input}`,
-            Otp: otp,
-            role: pandit.role,
-          });
-        }
+      // Check users table for mobile
+      const [usersResult] = await db.query(
+        `SELECT * FROM users WHERE mobile = ? OR mobile = ? OR mobile = ? OR mobile = ?`,
+        [clean10Digit, formattedMobile, input, digitsOnly]
+      );
+      if (usersResult.length > 0) {
+        user = usersResult[0];
+        isPandit = false;
       } else {
-        return res
-          .status(404)
-          .send({ success: false, message: "Mobile number or email not found" });
+        // Check pandit table for mobile
+        const [panditResult] = await db.query(
+          `SELECT * FROM pandit WHERE mobile = ? OR mobile = ? OR mobile = ? OR mobile = ?`,
+          [clean10Digit, formattedMobile, input, digitsOnly]
+        );
+        if (panditResult.length > 0) {
+          user = panditResult[0];
+          isPandit = true;
+        }
+      }
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "This mobile number is not registered. Please register first to continue."
+        });
       }
     }
+
+    // Generate Token & Save OTP
+    const token = generateToken(user.id);
+    const targetTable = isPandit ? "pandit" : "users";
+
+    const [updateResult] = await db.query(
+      `UPDATE ${targetTable} SET token = ?, otp = ? WHERE id = ?`,
+      [token, otp, user.id]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return res.status(500).json({
+        success: false,
+        error: `Failed to update OTP for ${isPandit ? "pandit" : "user"}`
+      });
+    }
+
+    // Auto Expire OTP after 5 Minutes
+    setTimeout(async () => {
+      try {
+        await db.query(
+          `UPDATE ${targetTable} SET otp = NULL WHERE id = ? AND otp = ?`,
+          [user.id, otp]
+        );
+      } catch (expErr) {}
+    }, 5 * 60 * 1000);
+
+    console.log(`\n========================================\n🔑 ${isPandit ? "PANDIT" : "USER"} LOGIN OTP FOR [${input} / ${user.name || "User"}]: ${otp}\n========================================\n`);
+
+    // Dispatch SMS if mobile is available
+    if (formattedMobile) {
+      // 1. Try Twilio
+      if (process.env.TWILIO_PHONE_NUMBER && twilioClient) {
+        try {
+          await twilioClient.messages.create({
+            body: `Dear user, your OTP for login to Prabhupooja is ${otp}. Please do not share this OTP with anyone.`,
+            from: process.env.TWILIO_PHONE_NUMBER,
+            to: formattedMobile,
+          });
+        } catch (twilioError) {
+          console.warn("Twilio SMS Warning:", twilioError.message);
+        }
+      }
+
+      // 2. Try MSG91
+      try {
+        await axios.post("https://api.msg91.com/api/v5/otp", {
+          mobile: formattedMobile,
+          otp,
+          authkey: "429244AwFH2ZM3FNN66d2d451P1",
+          sender: "Prabhupooja",
+          message: `Dear user, your OTP for login to Prabhupooja is ${otp}. Please do not share this OTP with anyone.`,
+        });
+      } catch (msg91Err) {
+        console.warn("MSG91 SMS Warning:", msg91Err.message);
+      }
+    }
+
+    // Dispatch Email if email is available
+    const recipientEmail = isEmail ? input : user.email;
+    if (recipientEmail && process.env.email && process.env.pass) {
+      try {
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: { user: process.env.email, pass: process.env.pass },
+        });
+
+        const mailOptions = {
+          from: process.env.email,
+          to: recipientEmail,
+          subject: "OTP for Login - Prabhu Pooja",
+          html: `<html>
+  <body style="font-family: Arial, sans-serif; background: #ffffff; margin: 0; padding: 20px; text-align: center;">
+    <div style="max-width: 600px; margin: auto; border: 1px solid #ffe0b2; border-radius: 12px; padding: 24px; background: #fffbf5;">
+      <img src="https://prabhupooja.s3.ap-south-1.amazonaws.com/onlinePooja/prabhupooja-logo.png" alt="Prabhu Pooja" height="40" style="margin-bottom: 20px;">
+      <h2 style="color: #bf360c; margin-top: 0;">Prabhu Pooja Login Verification</h2>
+      <p style="color: #333; font-size: 15px;">Hello <b>${user.name || (isPandit ? "Pandit Ji" : "User")}</b>,</p>
+      <p style="color: #555;">Your One-Time Password (OTP) for login is:</p>
+      <div style="font-size: 30px; font-weight: bold; color: #e65100; letter-spacing: 4px; background: #ffe0b2; padding: 12px 24px; border-radius: 8px; display: inline-block; margin: 15px 0;">${otp}</div>
+      <p style="font-size: 13px; color: #777;">This OTP is valid for <b>5 minutes</b>. Please do not share this OTP with anyone.</p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+      <p style="font-size: 12px; color: #999;">© 2026 Prabhu Pooja. All rights reserved.</p>
+    </div>
+  </body>
+</html>`,
+        };
+
+        transporter.sendMail(mailOptions, (error, info) => {
+          if (error) {
+            console.warn("⚠️ SMTP Notice (Gmail App Password invalid or expired):", error.message);
+            console.log(`ℹ️ [FALLBACK OTP] Use OTP '${otp}' to login.`);
+          } else {
+            console.log("✅ Email sent successfully to:", recipientEmail);
+          }
+        });
+      } catch (err) {
+        console.warn("Mail transport error:", err.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `OTP sent successfully to ${input}`,
+      Otp: otp,
+      role: user.role !== undefined ? user.role : (isPandit ? "1" : "0"),
+      userType: isPandit ? "pandit" : "user",
+      userId: user.id,
+      user: {
+        id: user.id,
+        name: user.name,
+        lastname: user.lastname,
+        mobile: user.mobile,
+        email: user.email,
+        role: user.role
+      }
+    });
+
   } catch (error) {
     console.error("Error in login function:", error.message, error.stack);
-    return res
-      .status(500)
-      .send({ error: "Internal Server Error", details: error.message });
+    return res.status(500).json({
+      success: false,
+      error: "Internal Server Error",
+      details: error.message
+    });
   }
 };
 exports.googleAuthCallback = (req, res) => {
@@ -596,50 +604,86 @@ exports.AppGoogleLogin = async (req, res) => {
 };
 exports.verifyOtp = async (req, res) => {
   const { otp } = req.body;
+  if (!otp || !String(otp).trim()) {
+    return res.status(400).json({
+      success: false,
+      error: "Please enter the 6-digit OTP."
+    });
+  }
+
   try {
     let [usersData] = await db.query("SELECT * FROM users WHERE otp = ?", [
-      otp,
+      String(otp).trim(),
     ]);
 
     if (usersData.length > 0) {
+      const matchedUser = usersData[0];
       // OTP verified, now set OTP to NULL in the database
       await db.query("UPDATE users SET otp = NULL WHERE id = ?", [
-        usersData[0].id,
+        matchedUser.id,
       ]);
 
-      return res.status(200).send({
+      return res.status(200).json({
+        success: true,
         message: "OTP verified successfully for user",
-        auth: usersData[0].token,
+        auth: matchedUser.token,
+        token: matchedUser.token,
         userType: "user",
+        user: {
+          id: matchedUser.id,
+          name: matchedUser.name,
+          lastname: matchedUser.lastname,
+          mobile: matchedUser.mobile,
+          email: matchedUser.email,
+          role: matchedUser.role
+        }
       });
     }
 
     let [panditsData] = await db.query("SELECT * FROM pandit WHERE otp = ?", [
-      otp,
+      String(otp).trim(),
     ]);
 
     if (panditsData.length > 0) {
+      const matchedPandit = panditsData[0];
       // OTP verified, now set OTP to NULL in the database
       await db.query("UPDATE pandit SET otp = NULL WHERE id = ?", [
-        panditsData[0].id,
+        matchedPandit.id,
       ]);
 
       await db.query(
         "UPDATE pandit_status SET status = 1 WHERE pandit_id = ?",
-        [panditsData[0].id]
+        [matchedPandit.id]
       );
 
-      return res.status(200).send({
+      return res.status(200).json({
+        success: true,
         message: "OTP verified successfully for pandit",
-        auth: panditsData[0].token,
+        auth: matchedPandit.token,
+        token: matchedPandit.token,
         userType: "pandit",
+        user: {
+          id: matchedPandit.id,
+          name: matchedPandit.name,
+          lastname: matchedPandit.lastname,
+          mobile: matchedPandit.mobile,
+          email: matchedPandit.email,
+          role: matchedPandit.role
+        }
       });
     }
 
-    return res.status(400).send({ error: "Invalid OTP" });
+    return res.status(400).json({
+      success: false,
+      error: "Invalid or expired OTP. Please try again."
+    });
   } catch (error) {
     console.error("Error verifying OTP:", error);
-    return res.status(500).send({ error: "Internal server error" });
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error",
+      details: error.message
+    });
   }
 };
 const formatUserImage = (img) => {
