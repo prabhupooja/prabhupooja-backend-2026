@@ -27,10 +27,17 @@ exports.create = async (req, res) => {
     }
 
     if (!image && req.body) {
-        image = req.body.image || req.body.imageUrl || req.body.image_url || req.body.banner || req.body.bannerImage || req.body.banner_image || req.body.img;
+        image = req.body.image || req.body.imageUrl || req.body.image_url || req.body.banner || req.body.bannerImage || req.body.banner_image || req.body.img || req.body.file;
         if (typeof image === 'object' && image !== null) {
-            image = image.url || image.location || image.path || image.src || null;
+            image = image.url || image.location || image.path || image.src || image.uri || null;
         }
+    }
+
+    if (!image && req.body && typeof req.body.data === 'string') {
+        try {
+            const parsed = JSON.parse(req.body.data);
+            image = parsed.image || parsed.imageUrl || parsed.image_url || parsed.banner || parsed.banner_image;
+        } catch (e) {}
     }
 
     const title = req.body?.title || req.body?.name || '';
@@ -89,7 +96,21 @@ exports.create = async (req, res) => {
 // Update an E-Commerce Banner
 exports.update = async (req, res) => {
     const id = req.params.id || req.body?.id || req.query?.id;
-    const image = req.file ? req.file.location : req.body?.image;
+    let image = null;
+    if (req.file) {
+        image = req.file.location || (req.file.key ? `https://${process.env.S3_BUCKET_NAME || 'prabhupooja1'}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${req.file.key}` : null) || req.file.path || req.file.filename;
+    } 
+    
+    if (!image && req.files && Array.isArray(req.files) && req.files.length > 0) {
+        image = req.files[0].location || req.files[0].path || req.files[0].filename;
+    }
+
+    if (!image && req.body?.image) {
+        image = req.body.image;
+        if (typeof image === 'object' && image !== null) {
+            image = image.url || image.location || image.path || null;
+        }
+    }
     const title = req.body?.title !== undefined ? req.body.title : undefined;
     const redirect_url = req.body?.redirect_url !== undefined ? req.body.redirect_url : (req.body?.redirectUrl !== undefined ? req.body.redirectUrl : req.body?.url);
     const status = req.body?.status !== undefined ? parseInt(req.body.status, 10) : undefined;

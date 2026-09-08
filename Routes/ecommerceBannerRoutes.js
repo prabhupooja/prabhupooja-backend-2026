@@ -27,7 +27,7 @@ const upload = multer({
 });
 
 const handleUpload = (req, res, next) => {
-  upload.single("image")(req, res, function (err) {
+  upload.any()(req, res, function (err) {
     if (err) {
       console.error("Multer/S3 Upload Error:", err);
       return res.status(400).json({
@@ -35,6 +35,9 @@ const handleUpload = (req, res, next) => {
         message: "Failed to upload banner image: " + (err.message || "S3 Upload Error"),
         error: err.message
       });
+    }
+    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+      req.file = req.files.find(f => f.fieldname === "image" || f.fieldname === "banner" || f.fieldname === "banner_image") || req.files[0];
     }
     next();
   });
