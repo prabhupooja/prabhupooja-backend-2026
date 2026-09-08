@@ -223,14 +223,26 @@ async function runMigrations() {
       console.warn("Note on enquiry table migration:", eqErr.message);
     }
 
-    // 11. Ensure ecommerce_banner table and columns exist
+    // 11. Ensure ecommerce_banner table and dynamic columns exist
     try {
       const createEcommerceBannerTable = `
         CREATE TABLE IF NOT EXISTS ecommerce_banner (
           id INT AUTO_INCREMENT PRIMARY KEY,
           title VARCHAR(255) NULL,
+          small_heading VARCHAR(255) NULL,
+          subtitle TEXT NULL,
           image VARCHAR(500) NOT NULL,
+          background_image VARCHAR(500) NULL,
+          offer_title VARCHAR(255) NULL,
+          offer_prefix VARCHAR(100) NULL,
+          offer_value VARCHAR(100) NULL,
+          offer_suffix VARCHAR(100) NULL,
+          button_text VARCHAR(100) NULL,
           redirect_url VARCHAR(500) NULL,
+          theme TEXT NULL,
+          features TEXT NULL,
+          badge_enabled TINYINT(1) DEFAULT 1,
+          sort_order INT DEFAULT 1,
           status TINYINT(1) DEFAULT 1,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -245,16 +257,64 @@ async function runMigrations() {
         await db.query("ALTER TABLE ecommerce_banner ADD COLUMN title VARCHAR(255) NULL AFTER id");
         console.log("✅ Added 'title' column to 'ecommerce_banner' table.");
       }
+      if (!ecomColNames.includes('small_heading')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN small_heading VARCHAR(255) NULL AFTER title");
+        console.log("✅ Added 'small_heading' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('subtitle')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN subtitle TEXT NULL AFTER small_heading");
+        console.log("✅ Added 'subtitle' column to 'ecommerce_banner' table.");
+      }
       if (!ecomColNames.includes('image')) {
-        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN image VARCHAR(500) NOT NULL AFTER title");
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN image VARCHAR(500) NOT NULL AFTER subtitle");
         console.log("✅ Added 'image' column to 'ecommerce_banner' table.");
       }
+      if (!ecomColNames.includes('background_image')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN background_image VARCHAR(500) NULL AFTER image");
+        console.log("✅ Added 'background_image' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('offer_title')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN offer_title VARCHAR(255) NULL AFTER background_image");
+        console.log("✅ Added 'offer_title' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('offer_prefix')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN offer_prefix VARCHAR(100) NULL AFTER offer_title");
+        console.log("✅ Added 'offer_prefix' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('offer_value')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN offer_value VARCHAR(100) NULL AFTER offer_prefix");
+        console.log("✅ Added 'offer_value' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('offer_suffix')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN offer_suffix VARCHAR(100) NULL AFTER offer_value");
+        console.log("✅ Added 'offer_suffix' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('button_text')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN button_text VARCHAR(100) NULL AFTER offer_suffix");
+        console.log("✅ Added 'button_text' column to 'ecommerce_banner' table.");
+      }
       if (!ecomColNames.includes('redirect_url')) {
-        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN redirect_url VARCHAR(500) NULL AFTER image");
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN redirect_url VARCHAR(500) NULL AFTER button_text");
         console.log("✅ Added 'redirect_url' column to 'ecommerce_banner' table.");
       }
+      if (!ecomColNames.includes('theme')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN theme TEXT NULL AFTER redirect_url");
+        console.log("✅ Added 'theme' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('features')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN features TEXT NULL AFTER theme");
+        console.log("✅ Added 'features' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('badge_enabled')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN badge_enabled TINYINT(1) DEFAULT 1 AFTER features");
+        console.log("✅ Added 'badge_enabled' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('sort_order')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN sort_order INT DEFAULT 1 AFTER badge_enabled");
+        console.log("✅ Added 'sort_order' column to 'ecommerce_banner' table.");
+      }
       if (!ecomColNames.includes('status')) {
-        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN status TINYINT(1) DEFAULT 1 AFTER redirect_url");
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN status TINYINT(1) DEFAULT 1 AFTER sort_order");
         console.log("✅ Added 'status' column to 'ecommerce_banner' table.");
       }
       if (!ecomColNames.includes('created_at')) {

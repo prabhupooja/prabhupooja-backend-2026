@@ -42,13 +42,19 @@ router.get("/", EcommerceBanner.getAll);
 router.get("/get/:id", EcommerceBanner.getById);
 router.get("/:id", EcommerceBanner.getById);
 
-// Update E-Commerce Banner
+// Update E-Commerce Banner (Supports PUT, POST, PATCH with /update/:id, /:id, or /update)
 router.put("/update/:id", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
+router.put("/update", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
 router.put("/:id", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
+router.post("/update/:id", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
+router.post("/update", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
+router.patch("/update/:id", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
+router.patch("/:id", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
 
 // Delete E-Commerce Banner
 router.delete("/delete/:id", AdminverifyToken, EcommerceBanner.delete);
 router.delete("/deleteBanner/:id", AdminverifyToken, EcommerceBanner.delete);
+router.delete("/delete", AdminverifyToken, EcommerceBanner.delete);
 router.delete("/:id", AdminverifyToken, EcommerceBanner.delete);
 
 module.exports = router;
