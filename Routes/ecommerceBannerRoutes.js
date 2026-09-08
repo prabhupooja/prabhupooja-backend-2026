@@ -20,7 +20,8 @@ const upload = multer({
     bucket: process.env.S3_BUCKET_NAME || "prabhupooja1",
     contentType: multerS3.AUTO_CONTENT_TYPE,
     key: function (req, file, cb) {
-      cb(null, `ecommerce-banners/${Date.now().toString()}-${file.originalname}`);
+      const sanitizedName = file.originalname ? file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_') : 'banner.png';
+      cb(null, `products/${Date.now().toString()}-${sanitizedName}`);
     },
   }),
 });
