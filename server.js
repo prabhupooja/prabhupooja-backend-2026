@@ -80,11 +80,11 @@ app.use('/auth', authLimiter, require("./Routes/customerRoutes"));
 app.use('/auth/mobile', require('./Routes/googleMobileAuth'));
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(express.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+app.use(bodyParser.json({ limit: "50mb" }));
+app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
 app.use(morgan("dev"));
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
 
 app.use("/api/v1/auth", authLimiter, require("./Routes/customerRoutes"));
 app.use("/api/v1/users", require("./Routes/customerRoutes"));

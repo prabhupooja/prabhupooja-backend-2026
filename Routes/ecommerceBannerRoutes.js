@@ -23,6 +23,7 @@ const upload = multer({
       cb(null, `products/${Date.now().toString()}-${file.originalname}`);
     },
   }),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max file size
 });
 
 // Create E-Commerce Banner
