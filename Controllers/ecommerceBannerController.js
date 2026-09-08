@@ -13,13 +13,19 @@ const clearEcommerceBannerCache = async () => {
 
 // Create an E-Commerce Banner
 exports.create = async (req, res) => {
-    const image = req.file ? req.file.location : (req.body?.image || null);
-    const title = req.body?.title || req.body?.name || '';
-    const redirect_url = req.body?.redirect_url || req.body?.redirectUrl || req.body?.url || '';
+    let image = null;
+    if (req.file) {
+        image = req.file.location || (req.file.key ? `https://${process.env.S3_BUCKET_NAME || 'prabhupooja1'}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${req.file.key}` : null) || req.file.path || req.file.filename;
+    } else if (req.body?.image) {
+        image = req.body.image;
+    }
+
+    const title = String(req.body?.title || req.body?.name || '').trim();
+    const redirect_url = String(req.body?.redirect_url || req.body?.redirectUrl || req.body?.url || '').trim();
     const status = req.body?.status !== undefined ? parseInt(req.body.status, 10) : 1;
 
     if (!image) {
-        return res.status(400).send({
+        return res.status(400).json({
             success: false,
             message: "Banner image is required"
         });
@@ -28,11 +34,11 @@ exports.create = async (req, res) => {
     try {
         const [data] = await db.query(
             `INSERT INTO ecommerce_banner (title, image, redirect_url, status) VALUES (?, ?, ?, ?)`, 
-            [title, image, redirect_url, status]
+            [title || null, image, redirect_url || null, status]
         );
 
         if (!data || !data.insertId) {
-            return res.status(500).send({
+            return res.status(500).json({
                 success: false,
                 message: "Error inserting ecommerce banner"
             });
@@ -41,7 +47,7 @@ exports.create = async (req, res) => {
         // Invalidate banner cache
         await clearEcommerceBannerCache();
 
-        return res.status(201).send({
+        return res.status(201).json({
             success: true,
             message: "E-Commerce banner added successfully",
             data: {
@@ -54,7 +60,7 @@ exports.create = async (req, res) => {
         });
     } catch (err) {
         console.error("Error adding ecommerce banner:", err);
-        return res.status(500).send({
+        return res.status(500).json({
             success: false,
             message: "Internal Server Error",
             error: err.message
