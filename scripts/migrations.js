@@ -223,7 +223,7 @@ async function runMigrations() {
       console.warn("Note on enquiry table migration:", eqErr.message);
     }
 
-    // 11. Ensure ecommerce_banner table exists
+    // 11. Ensure ecommerce_banner table and columns exist
     try {
       const createEcommerceBannerTable = `
         CREATE TABLE IF NOT EXISTS ecommerce_banner (
@@ -237,7 +237,36 @@ async function runMigrations() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `;
       await db.query(createEcommerceBannerTable);
-      console.log("✅ Table 'ecommerce_banner' checked/created successfully.");
+
+      const [ecomCols] = await db.query("SHOW COLUMNS FROM ecommerce_banner");
+      const ecomColNames = ecomCols.map(c => c.Field.toLowerCase());
+
+      if (!ecomColNames.includes('title')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN title VARCHAR(255) NULL AFTER id");
+        console.log("✅ Added 'title' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('image')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN image VARCHAR(500) NOT NULL AFTER title");
+        console.log("✅ Added 'image' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('redirect_url')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN redirect_url VARCHAR(500) NULL AFTER image");
+        console.log("✅ Added 'redirect_url' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('status')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN status TINYINT(1) DEFAULT 1 AFTER redirect_url");
+        console.log("✅ Added 'status' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('created_at')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        console.log("✅ Added 'created_at' column to 'ecommerce_banner' table.");
+      }
+      if (!ecomColNames.includes('updated_at')) {
+        await db.query("ALTER TABLE ecommerce_banner ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+        console.log("✅ Added 'updated_at' column to 'ecommerce_banner' table.");
+      }
+
+      console.log("✅ Table 'ecommerce_banner' verified/created/updated successfully.");
     } catch (ecomErr) {
       console.warn("Note on ecommerce_banner table migration:", ecomErr.message);
     }

@@ -62,7 +62,7 @@ exports.create = async (req, res) => {
         console.error("Error adding ecommerce banner:", err);
         return res.status(500).json({
             success: false,
-            message: "Internal Server Error",
+            message: err.message || "Internal Server Error",
             error: err.message
         });
     }

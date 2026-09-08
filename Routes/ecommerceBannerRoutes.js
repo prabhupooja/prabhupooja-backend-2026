@@ -26,10 +26,24 @@ const upload = multer({
   }),
 });
 
+const handleUpload = (req, res, next) => {
+  upload.single("image")(req, res, function (err) {
+    if (err) {
+      console.error("Multer/S3 Upload Error:", err);
+      return res.status(400).json({
+        success: false,
+        message: "Failed to upload banner image: " + (err.message || "S3 Upload Error"),
+        error: err.message
+      });
+    }
+    next();
+  });
+};
+
 // Create E-Commerce Banner
-router.post("/create", upload.single("image"), AdminverifyToken, EcommerceBanner.create);
-router.post("/add", upload.single("image"), AdminverifyToken, EcommerceBanner.create);
-router.post("/", upload.single("image"), AdminverifyToken, EcommerceBanner.create);
+router.post("/create", AdminverifyToken, handleUpload, EcommerceBanner.create);
+router.post("/add", AdminverifyToken, handleUpload, EcommerceBanner.create);
+router.post("/", AdminverifyToken, handleUpload, EcommerceBanner.create);
 
 // Get All E-Commerce Banners (Public & Admin)
 router.get("/get", EcommerceBanner.getAll);
@@ -43,8 +57,8 @@ router.get("/get/:id", EcommerceBanner.getById);
 router.get("/:id", EcommerceBanner.getById);
 
 // Update E-Commerce Banner
-router.put("/update/:id", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
-router.put("/:id", upload.single("image"), AdminverifyToken, EcommerceBanner.update);
+router.put("/update/:id", AdminverifyToken, handleUpload, EcommerceBanner.update);
+router.put("/:id", AdminverifyToken, handleUpload, EcommerceBanner.update);
 
 // Delete E-Commerce Banner
 router.delete("/delete/:id", AdminverifyToken, EcommerceBanner.delete);
