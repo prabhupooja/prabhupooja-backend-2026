@@ -16,25 +16,43 @@ exports.create = async (req, res) => {
     let image = null;
     if (req.file) {
         image = req.file.location || (req.file.key ? `https://${process.env.S3_BUCKET_NAME || 'prabhupooja1'}.s3.${process.env.AWS_REGION || 'ap-south-1'}.amazonaws.com/${req.file.key}` : null) || req.file.path || req.file.filename;
-    } else if (req.body?.image) {
-        image = req.body.image;
+    } 
+    
+    if (!image && req.files) {
+        if (Array.isArray(req.files) && req.files.length > 0) {
+            image = req.files[0].location || req.files[0].path || req.files[0].filename;
+        } else if (req.files.image && req.files.image.length > 0) {
+            image = req.files.image[0].location || req.files.image[0].path || req.files.image[0].filename;
+        }
     }
 
-    const title = String(req.body?.title || req.body?.name || '').trim();
-    const redirect_url = String(req.body?.redirect_url || req.body?.redirectUrl || req.body?.url || '').trim();
+    if (!image && req.body) {
+        image = req.body.image || req.body.imageUrl || req.body.image_url || req.body.banner || req.body.bannerImage || req.body.banner_image || req.body.img;
+        if (typeof image === 'object' && image !== null) {
+            image = image.url || image.location || image.path || image.src || null;
+        }
+    }
+
+    const title = req.body?.title || req.body?.name || '';
+    const redirect_url = req.body?.redirect_url || req.body?.redirectUrl || req.body?.url || '';
     const status = req.body?.status !== undefined ? parseInt(req.body.status, 10) : 1;
 
-    if (!image) {
+    const finalTitle = title && String(title).trim() ? String(title).trim() : null;
+    const finalImage = image && String(image).trim() ? String(image).trim() : '';
+    const finalRedirectUrl = redirect_url && String(redirect_url).trim() ? String(redirect_url).trim() : null;
+    const finalStatus = (!isNaN(status) && status !== null && status !== undefined) ? parseInt(status, 10) : 1;
+
+    if (!finalImage || finalImage === 'undefined' || finalImage === 'null') {
         return res.status(400).json({
             success: false,
-            message: "Banner image is required"
+            message: "Banner image is required. Please upload or select a banner image."
         });
     }
 
     try {
         const [data] = await db.query(
             `INSERT INTO ecommerce_banner (title, image, redirect_url, status) VALUES (?, ?, ?, ?)`, 
-            [title || null, image, redirect_url || null, status]
+            [finalTitle, finalImage, finalRedirectUrl, finalStatus]
         );
 
         if (!data || !data.insertId) {
@@ -52,10 +70,10 @@ exports.create = async (req, res) => {
             message: "E-Commerce banner added successfully",
             data: {
                 id: data.insertId,
-                title,
-                image,
-                redirect_url,
-                status
+                title: finalTitle,
+                image: finalImage,
+                redirect_url: finalRedirectUrl,
+                status: finalStatus
             }
         });
     } catch (err) {
