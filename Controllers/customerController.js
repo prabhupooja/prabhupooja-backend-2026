@@ -563,15 +563,24 @@ exports.login = async (req, res) => {
   }
 };
 exports.googleAuthCallback = (req, res) => {
-  const user = req.user;
-  if (!user) {
-    return res.status(401).json({ error: "Authentication failed" });
+  try {
+    const user = req.user;
+    const frontendUrl = process.env.FRONTEND_URL || 'https://www.prabhupooja.com';
+    if (!user || !user.id) {
+      return res.redirect(`${frontendUrl}/login?error=auth_failed`);
+    }
+    const token = generateToken(user.id);
+    let redirectPath = req.query.state || "/";
+    if (!redirectPath.startsWith("/")) {
+      redirectPath = "/" + redirectPath;
+    }
+    const delimiter = redirectPath.includes("?") ? "&" : "?";
+    return res.redirect(`${frontendUrl}${redirectPath}${delimiter}token=${token}`);
+  } catch (error) {
+    console.error("Google Auth Callback Error:", error);
+    const frontendUrl = process.env.FRONTEND_URL || 'https://www.prabhupooja.com';
+    return res.redirect(`${frontendUrl}/login?error=server_error`);
   }
-  const redirectPath = req.query.state || "/";
-  const frontendUrl = process.env.FRONTEND_URL || 'https://www.prabhupooja.com';
-  return res.redirect(
-    `${frontendUrl}${redirectPath}?token=${token}`
-  );
 };
 exports.AppGoogleLogin = async (req, res) => {
   try {
