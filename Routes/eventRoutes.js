@@ -53,18 +53,16 @@ if (!upload) {
     upload = multer({ storage: storage });
 }
 
-// Support both 'image' and 'file' field names in uploads
-const uploadMiddleware = upload.single('image');
+// Support single & multiple file uploads under any field names (image, banner, photo, gallery, file, etc.)
+const uploadMiddleware = upload.any();
 
 // --- EVENT ROUTES ---
 
-// --- EVENT BOOKINGS & REGISTRATIONS ---
-
-// 2. Devotee Event Registration / Booking
+// 1. Devotee Event Registration / Booking
 router.post('/register', eventController.registerEvent);
 router.post('/book', eventController.registerEvent);
 
-// 3. Event Bookings Management (Admin)
+// 2. Event Bookings Management (Admin)
 router.get('/bookings/all', eventController.getAllBookings);
 router.get('/bookings', eventController.getAllBookings);
 router.get('/bookings/event/:eventId', eventController.getEventBookingsByEventId);
@@ -73,35 +71,44 @@ router.put('/bookings/status/:id', eventController.updateBookingStatus);
 router.patch('/bookings/status/:id', eventController.updateBookingStatus);
 router.delete('/bookings/:id', eventController.deleteBooking);
 
-// --- EVENT CRUD ROUTES ---
-
-// 4. Create Event (Latest or Past)
+// 3. Create Event (Latest, Past, Single, Bulk)
 router.post('/create', uploadMiddleware, eventController.create);
+router.post('/create-past', uploadMiddleware, eventController.createPast);
+router.post('/past/create', uploadMiddleware, eventController.createPast);
+router.post('/past', uploadMiddleware, eventController.createPast);
+router.post('/create-latest', uploadMiddleware, eventController.createLatest);
+router.post('/latest/create', uploadMiddleware, eventController.createLatest);
+router.post('/latest', uploadMiddleware, eventController.createLatest);
+router.post('/bulk', uploadMiddleware, eventController.create);
+router.post('/create-bulk', uploadMiddleware, eventController.create);
 router.post('/', uploadMiddleware, eventController.create);
 
-// 5. Fetch Events
+// 4. Fetch Events
 router.get('/getall', eventController.getAll);
+router.get('/all', eventController.getAll);
 router.get('/latest', eventController.getLatest);
 router.get('/past', eventController.getPast);
 router.get('/stats', eventController.getStats);
 router.get('/', eventController.getAll);
 
-// 6. Fetch Single Event
+// 5. Fetch Single Event
 router.get('/get/:id', eventController.getById);
 router.get('/:id', eventController.getById);
 
-// 7. Update Event
+// 6. Update Event
 router.put('/update/:id', uploadMiddleware, eventController.update);
 router.put('/:id', uploadMiddleware, eventController.update);
+router.patch('/:id', uploadMiddleware, eventController.update);
 
-// 8. Update Status / Toggle Past State
+// 7. Update Status / Toggle Past State
 router.put('/update-status/:id', eventController.updateStatus);
 router.patch('/update-status/:id', eventController.updateStatus);
 router.patch('/toggle-past/:id', eventController.togglePast);
 router.put('/toggle-past/:id', eventController.togglePast);
 
-// 9. Delete Event
+// 8. Delete Event
 router.delete('/delete/:id', eventController.delete);
 router.delete('/:id', eventController.delete);
 
 module.exports = router;
+

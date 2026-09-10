@@ -24,16 +24,32 @@ router.get('/expend/:userId', AdminOrAgentVerifyToken, orderController.userOrder
 router.put('/updateStatus/:orderId', AdminOrAgentVerifyToken, orderController.statusUpdate);
 router.put('/updateStauts/:orderId', AdminOrAgentVerifyToken, orderController.statusUpdate);
 
+// Return, Refund & Replacement Routes
 router.post('/retrun-order', orderController.returnOrder);
 router.post('/return-order', orderController.returnOrder);
 router.post('/return', orderController.returnOrder);
-router.put('/refund_order/:order_id', AdminOrAgentVerifyToken, orderController.refundOrder);
+router.post('/request-return', orderController.returnOrder);
+router.post('/request-replacement', orderController.returnOrder);
+
+router.get('/admin/returns', AdminOrAgentVerifyToken, orderController.getAllReturnsForAdmin);
+router.get('/admin/all-returns', AdminOrAgentVerifyToken, orderController.getAllReturnsForAdmin);
+router.get('/returns/all', AdminOrAgentVerifyToken, orderController.getAllReturnsForAdmin);
+
+router.put('/admin/update-return/:id', AdminOrAgentVerifyToken, orderController.updateReturnStatusByAdmin);
+router.put('/refund_order/:order_id', AdminOrAgentVerifyToken, orderController.updateReturnStatusByAdmin);
+router.put('/refund-order/:order_id', AdminOrAgentVerifyToken, orderController.updateReturnStatusByAdmin);
+
+router.get('/my-returns', verifyToken, orderController.getUserReturns);
+router.get('/user-returns/:userId', orderController.getUserReturns);
+
 router.get('/getCount/:status', orderController.getOrderTrackingByStatus);
 router.get('/tracking/status/:status', orderController.getOrderTrackingByStatus);
 router.get('/payementCount/:status', orderController.TrackingStatus);
 router.get('/getOrderId/:orderId', orderController.getByOrderId);
 router.get('/getCustomerDetail/:userId', orderController.getCustomerDetail);
 router.get('/recentOrders', orderController.RecentOrders);
+router.get('/invoice/:orderId', orderController.downloadOrderInvoice);
+router.get('/download-invoice/:orderId', orderController.downloadOrderInvoice);
 
 module.exports = router;
 

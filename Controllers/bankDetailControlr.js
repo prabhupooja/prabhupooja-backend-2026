@@ -404,3 +404,125 @@ exports.verifyBankAccount = async (req, res) => {
       .json({ success: false, message: "Internal server error", error });
   }
 };
+
+/**
+ * Admin: Get All Withdrawal Requests Across All Sellers
+ */
+exports.getAllWithdrawalRequestsForAdmin = async (req, res) => {
+  try {
+    const { status, search, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    let whereClauses = [];
+    let queryParams = [];
+
+    if (status && status !== 'all') {
+      whereClauses.push('wr.status = ?');
+      queryParams.push(status);
+    }
+
+    if (search && search.trim()) {
+      const searchPattern = `%${search.trim()}%`;
+      whereClauses.push('(wr.transactionId LIKE ? OR s.seller_name LIKE ? OR s.shop_name LIKE ? OR s.number LIKE ? OR s.email LIKE ?)');
+      queryParams.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    const countQuery = `
+      SELECT COUNT(*) AS total
+      FROM withdrawal_requests wr
+      LEFT JOIN sellers s ON wr.seller_id = s.id
+      ${whereSql}
+    `;
+    const [[{ total }]] = await db.query(countQuery, queryParams);
+
+    const dataQuery = `
+      SELECT 
+        wr.*,
+        s.seller_name AS sellerName,
+        s.shop_name AS shopName,
+        s.number AS sellerMobile,
+        s.email AS sellerEmail,
+        s.wallet_balance AS currentWalletBalance,
+        bd.bank_name AS bankName,
+        bd.account_holder_name AS accountHolderName,
+        bd.account_number AS accountNumber,
+        bd.ifsc_number AS ifscNumber
+      FROM withdrawal_requests wr
+      LEFT JOIN sellers s ON wr.seller_id = s.id
+      LEFT JOIN bank_detail bd ON (s.id = bd.merchant_id)
+      ${whereSql}
+      ORDER BY wr.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    const [requests] = await db.query(dataQuery, [...queryParams, limitNum, offset]);
+
+    return res.status(200).json({
+      success: true,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      currentPage: pageNum,
+      data: requests
+    });
+  } catch (error) {
+    console.error("Error in getAllWithdrawalRequestsForAdmin:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+  }
+};
+
+/**
+ * Admin: Approve / Mark Transferred or Reject Withdrawal Request
+ */
+exports.updateWithdrawalStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, adminRemark, transferReference } = req.body;
+
+    if (!id || !status) {
+      return res.status(400).json({ success: false, message: "Request ID and status are required" });
+    }
+
+    const [existing] = await db.query("SELECT * FROM withdrawal_requests WHERE id = ?", [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: "Withdrawal request not found" });
+    }
+
+    const request = existing[0];
+    const prevStatus = (request.status || '').toLowerCase();
+    const newStatusLower = status.toLowerCase();
+
+    // If changing from pending/approved to rejected, refund the amount back to seller wallet!
+    if (newStatusLower === 'rejected' && prevStatus !== 'rejected') {
+      const refundAmount = parseFloat(request.amount || 0);
+      if (refundAmount > 0) {
+        await db.query("UPDATE sellers SET wallet_balance = COALESCE(wallet_balance, 0) + ? WHERE id = ?", [refundAmount, request.seller_id]);
+        console.log(`✓ Refunded ₹${refundAmount} to seller #${request.seller_id} for rejected withdrawal request #${id}`);
+      }
+    }
+
+    await db.query(
+      "UPDATE withdrawal_requests SET status = ?, remarks = ? WHERE id = ?",
+      [status, adminRemark || transferReference || null, id]
+    );
+
+    // Notify seller
+    try {
+      await sendNotification(
+        request.seller_id,
+        `Your withdrawal request of ₹${request.amount} has been ${status}. ${adminRemark ? `Remark: ${adminRemark}` : ''}`
+      );
+    } catch (nErr) {}
+
+    return res.status(200).json({
+      success: true,
+      message: `Withdrawal request status updated to ${status}`
+    });
+  } catch (error) {
+    console.error("Error in updateWithdrawalStatus:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+  }
+};
+

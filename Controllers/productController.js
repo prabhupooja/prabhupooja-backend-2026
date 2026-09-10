@@ -23,9 +23,11 @@ exports.create = async (req, res) => {
     ProductHighlights,
     Benefits,
     UsageAndCareInstructions,
+    verified,
   } = req.body;
 
-  merchantId = merchantId || (req.user && req.user.id);
+  merchantId = merchantId || (req.user && req.user.id) || 1;
+  const isVerified = (verified !== undefined && verified !== null) ? Number(verified) : 1;
 
   const images = req.files ? req.files.map((file) => file.location) : (req.file ? [req.file.location] : []);
 
@@ -76,7 +78,8 @@ exports.create = async (req, res) => {
           productName = ?, theme = ?, brand = ?, colour = ?, style = ?, material = ?, 
           specialFeature = ?, noOfItems = ?, price = ?, image = ?, offerPrice = ?, 
           description = ?, merchantId = ?, Height = ?, Dimension = ?, Weight = ?, 
-          ProductCode = ?, ProductHighlights = ?, Benefits = ?, UsageAndCareInstructions = ?
+          ProductCode = ?, ProductHighlights = ?, Benefits = ?, UsageAndCareInstructions = ?,
+          verified = COALESCE(?, verified, 1)
          WHERE id = ?`,
         [
           productName,
@@ -99,6 +102,7 @@ exports.create = async (req, res) => {
           ProductHighlights,
           Benefits,
           UsageAndCareInstructions,
+          isVerified,
           productId,
         ]
       );
@@ -110,17 +114,18 @@ exports.create = async (req, res) => {
       });
     }
 
-    // Else, create a new product
+    // Else, create a new product (Default verified = 1 so it appears live on website immediately)
     const create = await db.query(
       `INSERT INTO products (
         productName, theme, brand, colour, style, material, specialFeature, 
         noOfItems, price, image, offerPrice, description, merchantId,
-        Height, Dimension, Weight, ProductCode, ProductHighlights, Benefits, UsageAndCareInstructions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        Height, Dimension, Weight, ProductCode, ProductHighlights, Benefits, UsageAndCareInstructions,
+        verified, isDeleted, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
       [
         productName,
         theme,
-        brand,
+        brand || "PrabhuPooja",
         colour,
         style,
         material,
@@ -138,12 +143,13 @@ exports.create = async (req, res) => {
         ProductHighlights,
         Benefits,
         UsageAndCareInstructions,
+        isVerified,
       ]
     );
 
     return res.status(201).json({
       success: true,
-      message: "Product created successfully",
+      message: "Product created & published successfully",
     });
   } catch (error) {
     console.error("Error in product create/update:", error);

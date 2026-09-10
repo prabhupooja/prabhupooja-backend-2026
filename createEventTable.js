@@ -49,6 +49,8 @@ async function createEventTable() {
             { name: "registration_link", definition: "VARCHAR(500) DEFAULT NULL" },
             { name: "website", definition: "VARCHAR(500) DEFAULT NULL" },
             { name: "video_url", definition: "VARCHAR(500) DEFAULT NULL" },
+            { name: "gallery", definition: "LONGTEXT DEFAULT NULL" },
+            { name: "tags", definition: "TEXT DEFAULT NULL" },
             { name: "highlights", definition: "TEXT DEFAULT NULL" },
             { name: "event_type", definition: "VARCHAR(50) DEFAULT 'latest'" },
             { name: "is_past", definition: "TINYINT(1) DEFAULT 0" },

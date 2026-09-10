@@ -17,21 +17,31 @@ const {
 
 const uploadPdfToS3 = async (filePath) => {
   const fileName = path.basename(filePath);
-  const fileStream = fs.createReadStream(filePath);
+  const backendBaseUrl = process.env.BACKEND_URL || "http://localhost:3002";
+  const localUrl = `${backendBaseUrl}/invoices/${fileName}`;
 
-  const uploadParams = {
-    Bucket: process.env.S3_BUCKET_NAME,
-    Key: `invoices/${fileName}`,
-    Body: fileStream,
-    ContentType: "application/pdf",
-    // ACL: "public-read",
-  };
+  if (!process.env.S3_BUCKET_NAME || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+    return localUrl;
+  }
 
-  const command = new PutObjectCommand(uploadParams);
-  await s3.send(command);
+  try {
+    const fileStream = fs.createReadStream(filePath);
+    const uploadParams = {
+      Bucket: process.env.S3_BUCKET_NAME,
+      Key: `invoices/${fileName}`,
+      Body: fileStream,
+      ContentType: "application/pdf",
+    };
 
-  const fileUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/invoices/${fileName}`;
-  return fileUrl;
+    const command = new PutObjectCommand(uploadParams);
+    await s3.send(command);
+
+    const fileUrl = `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION || "ap-south-1"}.amazonaws.com/invoices/${fileName}`;
+    return fileUrl;
+  } catch (s3Err) {
+    console.warn("S3 upload failed for invoice, falling back to local static URL:", s3Err.message);
+    return localUrl;
+  }
 };
 
 const generateInvoice = async (data) => {
@@ -411,18 +421,15 @@ exports.create = async (req, res) => {
 
         await transporter.sendMail(mailOptions);
 
-        const fileName = filePath.split("/").pop();
-
-        const invoiceUrl = await uploadPdfToS3(filePath, fileName);
-
-        fs.unlinkSync(filePath);
+        const fileName = filePath.split("/").pop().split("\\").pop();
+        let invoiceUrl = await uploadPdfToS3(filePath);
 
         const [invoice] = await db.query(
           `INSERT INTO order_invoice (user_id, order_id, path_url) VALUES (?, ?, ?)`,
           [userId, result.insertId, invoiceUrl]
         );
       } catch (emailErr) {
-        console.error("Error sending email:", emailErr);
+        console.error("Error creating/sending invoice:", emailErr);
       }
     }
 
@@ -503,55 +510,112 @@ exports.create = async (req, res) => {
 
 exports.getAll = async (req, res) => {
   try {
-    const { search } = req.query || "";
-    console.log(search, "ds");
+    const { search = "", status = "", sellerId = "", page, limit } = req.query;
+    
+    let whereClauses = [];
+    let queryParams = [];
+
+    if (search && search.trim()) {
+      const searchPattern = `%${search.trim()}%`;
+      whereClauses.push(`(
+        orders.id LIKE ? OR
+        users.name LIKE ? OR
+        users.email LIKE ? OR
+        users.mobile LIKE ? OR
+        sellers.seller_name LIKE ? OR
+        sellers.shop_name LIKE ? OR
+        orders.paymentMethod LIKE ? OR
+        orders.status LIKE ? OR
+        orders.order_status LIKE ?
+      )`);
+      queryParams.push(
+        searchPattern, searchPattern, searchPattern, searchPattern,
+        searchPattern, searchPattern, searchPattern, searchPattern, searchPattern
+      );
+    }
+
+    if (status && status !== 'all') {
+      whereClauses.push(`(orders.status = ? OR orders.order_status = ?)`);
+      queryParams.push(status, status);
+    }
+
+    if (sellerId) {
+      whereClauses.push(`(orders.merchantId = ? OR orders.merchantId = ?)`);
+      queryParams.push(sellerId, JSON.stringify(sellerId));
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    // Pagination
+    let paginationSql = "";
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    if (!isNaN(pageNum) && !isNaN(limitNum) && pageNum > 0 && limitNum > 0) {
+      const offset = (pageNum - 1) * limitNum;
+      paginationSql = ` LIMIT ${limitNum} OFFSET ${offset}`;
+    }
+
     const query = `
       SELECT 
         orders.id AS orderId,
+        orders.id,
         orders.userId,
+        orders.merchantId AS sellerId,
+        orders.merchantId,
         orders.totalPrice AS Price,
+        orders.totalPrice,
         orders.paymentMethod AS Method,
+        orders.paymentMethod,
         orders.status AS orderStatus,
-        JSON_LENGTH(orders.quantity) AS TotalOrder,
+        orders.status,
+        orders.order_status AS orderProgress,
+        orders.order_status,
+        orders.shipping_address AS shippingAddress,
+        orders.payment_id AS paymentId,
+        orders.createdAt AS orderDate,
+        orders.createdAt,
         users.name AS userName,
         users.email AS userEmail,
-        orders.createdAt AS orderDate
+        users.mobile AS userMobile,
+        sellers.seller_name AS sellerName,
+        sellers.shop_name AS shopName,
+        sellers.number AS sellerMobile,
+        sellers.email AS sellerEmail
       FROM orders
-      INNER JOIN users ON orders.userId = users.id
-      WHERE 
-        orders.id LIKE ? OR
-        users.name LIKE ? OR
-        orders.paymentMethod LIKE ? OR
-        orders.status = ?
-      ORDER BY orders.createdAt DESC;
+      LEFT JOIN users ON orders.userId = users.id
+      LEFT JOIN sellers ON (orders.merchantId = sellers.id OR orders.merchantId = CONCAT('"', sellers.id, '"'))
+      ${whereSql}
+      ORDER BY orders.createdAt DESC
+      ${paginationSql};
     `;
 
-    // For LIKE fields
-    const searchPattern = `%${search}%`;
+    const [orders] = await db.query(query, queryParams);
 
-    const data = await db.query(query, [
-      searchPattern,
-      searchPattern,
-      searchPattern,
-      search,
-    ]);
+    const [countResult] = await db.query(
+      `SELECT COUNT(*) AS total 
+       FROM orders 
+       LEFT JOIN users ON orders.userId = users.id 
+       LEFT JOIN sellers ON (orders.merchantId = sellers.id OR orders.merchantId = CONCAT('"', sellers.id, '"')) 
+       ${whereSql}`,
+      queryParams
+    );
 
-    if (!data.length) {
-      return res.status(404).send({
-        success: false,
-        message: "No orders found",
-      });
-    }
+    const total = countResult[0]?.total || orders.length;
 
     return res.status(200).send({
       success: true,
-      data: data[0],
+      count: total,
+      total,
+      totalPages: limitNum ? Math.ceil(total / limitNum) : 1,
+      data: orders,
+      orders: orders
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in orderController.getAll:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
+      error: error.message
     });
   }
 };
@@ -1804,115 +1868,431 @@ exports.statusUpdate = async (req, res) => {
   }
 };
 
+/**
+ * 1. User Initiates Return / Refund / Replacement Request
+ */
 exports.returnOrder = async (req, res) => {
-  const { order_id } = req.body;
-  if (!order_id) {
-    return res.status(400).json({ error: "Order ID is required" });
+  const {
+    order_id,
+    orderId,
+    request_type = "refund", // "refund" or "replacement"
+    reason,
+    product_id,
+    amount,
+    upi_id,
+    account_holder_name,
+    bank_name,
+    account_number,
+    ifsc_code,
+    proof_images
+  } = req.body;
+
+  const targetOrderId = order_id || orderId;
+  if (!targetOrderId) {
+    return res.status(400).json({ success: false, message: "Order ID is required" });
   }
 
   try {
-    const [originalOrder] = await db.query(
-      "SELECT * FROM orders WHERE id = ?",
-      [order_id]
-    );
+    const [originalOrder] = await db.query("SELECT * FROM orders WHERE id = ?", [targetOrderId]);
 
     if (!originalOrder || originalOrder.length === 0) {
-      return res.status(404).json({ error: "Original order not found" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     const order = originalOrder[0];
+    const orderStatusLower = String(order.order_status || order.status || "").toLowerCase();
 
-    // Check if order status is complete
-    if (order.order_status !== "complete") {
-      return res
-        .status(400)
-        .json({ error: "Order is not complete. Return not allowed." });
+    // Check if order was delivered / completed
+    if (!["complete", "completed", "delivered"].includes(orderStatusLower)) {
+      return res.status(400).json({
+        success: false,
+        message: "Return / Replacement is only allowed after the order is delivered."
+      });
     }
 
-    const [existingReturn] = await db.query(
-      "SELECT * FROM order_return WHERE order_id = ?",
-      [order_id]
-    );
+    const [existingReturn] = await db.query("SELECT * FROM order_return WHERE order_id = ?", [targetOrderId]);
+
+    const resolvedAmount = amount ? parseFloat(amount) : parseFloat(order.totalPrice || 0);
+    const resolvedMerchantId = order.merchantId ? (typeof order.merchantId === 'object' ? JSON.stringify(order.merchantId) : String(order.merchantId)) : null;
+    const resolvedProductId = product_id ? (typeof product_id === 'object' ? JSON.stringify(product_id) : String(product_id)) : (typeof order.productId === 'object' ? JSON.stringify(order.productId) : String(order.productId));
+    const resolvedProof = proof_images ? (Array.isArray(proof_images) ? JSON.stringify(proof_images) : String(proof_images)) : null;
 
     if (existingReturn.length > 0) {
-      return res
-        .status(400)
-        .json({ error: "Return order for this order already exists" });
+      // Update existing return request
+      await db.query(`
+        UPDATE order_return 
+        SET 
+          request_type = ?, 
+          reason = ?, 
+          amount = ?, 
+          upi_id = ?, 
+          account_holder_name = ?, 
+          bank_name = ?, 
+          account_number = ?, 
+          ifsc_code = ?, 
+          proof_images = ?,
+          admin_status = 'pending',
+          refund_status = 'pending',
+          updatedAt = NOW()
+        WHERE order_id = ?
+      `, [
+        request_type,
+        reason || null,
+        resolvedAmount,
+        upi_id || null,
+        account_holder_name || null,
+        bank_name || null,
+        account_number || null,
+        ifsc_code || null,
+        resolvedProof,
+        targetOrderId
+      ]);
+
+      return res.status(200).json({
+        success: true,
+        message: `${request_type === 'replacement' ? 'Replacement' : 'Refund'} request updated successfully. Admin is reviewing your request.`
+      });
     }
 
     const insertQuery = `
-      INSERT INTO order_return (order_id, user_id, merchant_id, product_id, amount)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO order_return 
+      (order_id, user_id, merchant_id, product_id, amount, request_type, reason, upi_id, account_holder_name, bank_name, account_number, ifsc_code, proof_images, refund_status, admin_status) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending')
     `;
 
     await db.query(insertQuery, [
-      order_id,
+      targetOrderId,
       order.userId,
-      JSON.stringify(order.merchantId),
-      JSON.stringify(order.productId),
-      order.totalPrice,
+      resolvedMerchantId,
+      resolvedProductId,
+      resolvedAmount,
+      request_type,
+      reason || null,
+      upi_id || null,
+      account_holder_name || null,
+      bank_name || null,
+      account_number || null,
+      ifsc_code || null,
+      resolvedProof
     ]);
+
+    // Send Notification to Admin & User
+    try {
+      if (order.userId) {
+        await sendNotification(order.userId, `Your ${request_type} request for Order #${targetOrderId} has been received.`);
+      }
+    } catch (nErr) {}
 
     return res.status(201).json({
       success: true,
-      message: "Return order created successfully",
+      message: `${request_type === 'replacement' ? 'Replacement' : 'Refund'} request submitted successfully! Admin will review and process your request.`
     });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("Error in returnOrder:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
   }
 };
 
-exports.refundOrder = async (req, res) => {
-  const { order_id } = req.params;
+/**
+ * 2. Admin: Get All Returns & Replacements Across All Orders
+ */
+exports.getAllReturnsForAdmin = async (req, res) => {
+  try {
+    const { status, type, search, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
+    const offset = (pageNum - 1) * limitNum;
 
-  if (!order_id) {
-    return res.status(400).json({ error: "Order ID is required" });
+    let whereClauses = [];
+    let queryParams = [];
+
+    if (status && status !== 'all') {
+      whereClauses.push('(ret.admin_status = ? OR ret.refund_status = ?)');
+      queryParams.push(status, status);
+    }
+
+    if (type && type !== 'all') {
+      whereClauses.push('ret.request_type = ?');
+      queryParams.push(type);
+    }
+
+    if (search && search.trim()) {
+      const searchPattern = `%${search.trim()}%`;
+      whereClauses.push('(ret.order_id LIKE ? OR u.name LIKE ? OR u.mobile LIKE ? OR s.shop_name LIKE ? OR s.seller_name LIKE ? OR ret.upi_id LIKE ?)');
+      queryParams.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    const countQuery = `
+      SELECT COUNT(*) AS total 
+      FROM order_return ret
+      LEFT JOIN users u ON ret.user_id = u.id
+      LEFT JOIN orders o ON ret.order_id = o.id
+      LEFT JOIN sellers s ON (ret.merchant_id = s.id OR ret.merchant_id = CONCAT('"', s.id, '"'))
+      ${whereSql}
+    `;
+    const [[{ total }]] = await db.query(countQuery, queryParams);
+
+    const dataQuery = `
+      SELECT 
+        ret.*,
+        u.name AS userName,
+        u.mobile AS userMobile,
+        u.email AS userEmail,
+        o.totalPrice AS orderTotalPrice,
+        o.paymentMethod AS orderPaymentMethod,
+        o.createdAt AS orderCreatedAt,
+        s.id AS sellerId,
+        s.seller_name AS sellerName,
+        s.shop_name AS shopName,
+        s.number AS sellerMobile,
+        s.email AS sellerEmail,
+        s.wallet_balance AS sellerWalletBalance
+      FROM order_return ret
+      LEFT JOIN users u ON ret.user_id = u.id
+      LEFT JOIN orders o ON ret.order_id = o.id
+      LEFT JOIN sellers s ON (ret.merchant_id = s.id OR ret.merchant_id = CONCAT('"', s.id, '"'))
+      ${whereSql}
+      ORDER BY ret.createdAt DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    const [returns] = await db.query(dataQuery, [...queryParams, limitNum, offset]);
+
+    return res.status(200).json({
+      success: true,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      currentPage: pageNum,
+      data: returns
+    });
+  } catch (error) {
+    console.error("Error in getAllReturnsForAdmin:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+  }
+};
+
+/**
+ * 3. Admin: Update Return Status (Approve / Reject / Process Refund / Replacement Courier)
+ */
+exports.updateReturnStatusByAdmin = async (req, res) => {
+  const { id } = req.params;
+  const {
+    status, // "approved", "rejected", "refunded", "replaced"
+    admin_remarks,
+    adminRemarks,
+    transaction_reference,
+    transactionReference,
+    payment_receipt,
+    paymentReceipt,
+    replacement_tracking_id,
+    replacementTrackingId,
+    replacement_courier,
+    replacementCourier
+  } = req.body;
+
+  if (!id || !status) {
+    return res.status(400).json({ success: false, message: "Return Request ID and status are required" });
   }
 
   try {
-    const [originalOrder] = await db.query(
-      "SELECT * FROM orders WHERE id = ?",
-      [order_id]
-    );
-
-    if (!originalOrder || originalOrder.length === 0) {
-      return res.status(404).json({ error: "Original order not found" });
+    const [existing] = await db.query("SELECT * FROM order_return WHERE id = ? OR order_id = ?", [id, id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: "Return request not found" });
     }
 
-    const order = originalOrder[0];
+    const retRecord = existing[0];
+    const prevStatus = (retRecord.admin_status || '').toLowerCase();
+    const newStatusLower = status.toLowerCase();
 
-    if (order.order_status !== "complete") {
-      return res
-        .status(400)
-        .json({ error: "Order is not complete. Return not allowed." });
+    const resolvedRemarks = admin_remarks || adminRemarks || null;
+    const resolvedRef = transaction_reference || transactionReference || null;
+    const resolvedReceipt = payment_receipt || paymentReceipt || null;
+    const resolvedTracking = replacement_tracking_id || replacementTrackingId || null;
+    const resolvedCourier = replacement_courier || replacementCourier || null;
+
+    // Handle Seller Wallet Deduction when Refund is marked completed/refunded
+    let sellerId = retRecord.merchant_id;
+    if (typeof sellerId === 'string' && sellerId.startsWith('"')) {
+      try { sellerId = JSON.parse(sellerId); } catch (e) {}
     }
 
-    const [existingReturn] = await db.query(
-      "SELECT * FROM order_return WHERE order_id = ?",
-      [order_id]
-    );
-
-    if (existingReturn.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "No return order found for this order to update" });
+    if (newStatusLower === 'refunded' && retRecord.wallet_deducted === 0 && sellerId) {
+      const refundAmount = parseFloat(retRecord.amount || 0);
+      if (refundAmount > 0) {
+        try {
+          await db.query("UPDATE sellers SET wallet_balance = GREATEST(0, wallet_balance - ?) WHERE id = ?", [refundAmount, sellerId]);
+          console.log(`✓ Deducted ₹${refundAmount} from seller #${sellerId} wallet balance for refunded order #${retRecord.order_id}`);
+        } catch (wErr) {
+          console.warn("Error deducting seller wallet for refund:", wErr.message);
+        }
+      }
     }
 
-    // Update the existing return record
-    await db.query(
-      "UPDATE order_return SET refund_status = ?, createdAt = NOW() WHERE order_id = ?",
-      [true, order_id]
-    );
+    const updateQuery = `
+      UPDATE order_return 
+      SET 
+        admin_status = ?, 
+        refund_status = ?,
+        admin_remarks = COALESCE(?, admin_remarks),
+        transaction_reference = COALESCE(?, transaction_reference),
+        payment_receipt = COALESCE(?, payment_receipt),
+        replacement_tracking_id = COALESCE(?, replacement_tracking_id),
+        replacement_courier = COALESCE(?, replacement_courier),
+        wallet_deducted = CASE WHEN ? = 'refunded' THEN 1 ELSE wallet_deducted END,
+        updatedAt = NOW()
+      WHERE id = ?
+    `;
 
-    return res
-      .status(200)
-      .json({ message: "Refund status updated successfully." });
-  } catch (err) {
-    console.error(err);
-    return res
-      .status(500)
-      .json({ error: "An error occurred while updating the refund status." });
+    await db.query(updateQuery, [
+      status,
+      status,
+      resolvedRemarks,
+      resolvedRef,
+      resolvedReceipt,
+      resolvedTracking,
+      resolvedCourier,
+      newStatusLower,
+      retRecord.id
+    ]);
+
+    // Notify User
+    if (retRecord.user_id) {
+      try {
+        let msg = `Your ${retRecord.request_type} request for Order #${retRecord.order_id} has been ${status}.`;
+        if (newStatusLower === 'refunded' && resolvedRef) msg += ` UTR: ${resolvedRef}`;
+        if (newStatusLower === 'replaced' && resolvedTracking) msg += ` Courier Tracking: ${resolvedTracking} (${resolvedCourier || 'Standard'})`;
+        await sendNotification(retRecord.user_id, msg);
+      } catch (nErr) {}
+    }
+
+    // Notify Seller
+    if (sellerId) {
+      try {
+        await sendNotification(sellerId, `Order #${retRecord.order_id} ${retRecord.request_type} status was updated to ${status} by Admin.`);
+      } catch (sErr) {}
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Return request #${retRecord.id} status updated to ${status}`
+    });
+  } catch (error) {
+    console.error("Error in updateReturnStatusByAdmin:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+  }
+};
+
+// Backwards compatibility alias for refundOrder
+exports.refundOrder = exports.updateReturnStatusByAdmin;
+
+/**
+ * 4. Seller: Get Return & Replacement Requests for this Seller's Shop
+ */
+exports.getSellerReturns = async (req, res) => {
+  try {
+    const sellerId = req.user.id || req.user.userId;
+    const { status, type, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    const sellerIdStr = String(sellerId);
+    const sellerIdJson = JSON.stringify(sellerId);
+
+    let whereClauses = ["(ret.merchant_id = ? OR ret.merchant_id = ? OR JSON_CONTAINS(ret.merchant_id, ?) OR JSON_CONTAINS(ret.merchant_id, ?) OR ret.merchant_id LIKE ?)"];
+    let queryParams = [sellerId, sellerIdStr, sellerIdJson, `"${sellerIdStr}"`, `%"${sellerIdStr}"%`];
+
+    if (status && status !== 'all') {
+      whereClauses.push('(ret.admin_status = ? OR ret.refund_status = ?)');
+      queryParams.push(status, status);
+    }
+
+    if (type && type !== 'all') {
+      whereClauses.push('ret.request_type = ?');
+      queryParams.push(type);
+    }
+
+    const whereSql = `WHERE ${whereClauses.join(' AND ')}`;
+
+    const countQuery = `SELECT COUNT(*) AS total FROM order_return ret ${whereSql}`;
+    const [[{ total }]] = await db.query(countQuery, queryParams);
+
+    const dataQuery = `
+      SELECT 
+        ret.*,
+        u.name AS userName,
+        u.mobile AS userMobile,
+        o.totalPrice AS orderTotalPrice,
+        o.shipping_address AS shippingAddress,
+        o.createdAt AS orderDate
+      FROM order_return ret
+      LEFT JOIN users u ON ret.user_id = u.id
+      LEFT JOIN orders o ON ret.order_id = o.id
+      ${whereSql}
+      ORDER BY ret.createdAt DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    const [returns] = await db.query(dataQuery, [...queryParams, limitNum, offset]);
+
+    return res.status(200).json({
+      success: true,
+      total,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      currentPage: pageNum,
+      data: returns
+    });
+  } catch (error) {
+    console.error("Error in getSellerReturns:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+  }
+};
+
+/**
+ * 5. User: Get My Return / Replacement Status
+ */
+exports.getUserReturns = async (req, res) => {
+  try {
+    const userId = req.params.userId || (req.user && req.user.id);
+    const { orderId } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    let whereClauses = ["ret.user_id = ?"];
+    let queryParams = [userId];
+
+    if (orderId) {
+      whereClauses.push("ret.order_id = ?");
+      queryParams.push(orderId);
+    }
+
+    const dataQuery = `
+      SELECT 
+        ret.*,
+        o.totalPrice AS orderTotalPrice,
+        o.createdAt AS orderDate,
+        s.shop_name AS shopName
+      FROM order_return ret
+      LEFT JOIN orders o ON ret.order_id = o.id
+      LEFT JOIN sellers s ON (ret.merchant_id = s.id OR ret.merchant_id = CONCAT('"', s.id, '"'))
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY ret.createdAt DESC
+    `;
+
+    const [returns] = await db.query(dataQuery, queryParams);
+
+    return res.status(200).json({
+      success: true,
+      count: returns.length,
+      data: returns
+    });
+  } catch (error) {
+    console.error("Error in getUserReturns:", error);
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
   }
 };
 
@@ -2372,5 +2752,99 @@ exports.RecentOrders = async (req, res) => {
   } catch (error) {
     console.error("Unexpected error:", error);
     return res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+/**
+ * Download or Stream Official Order Invoice (PDF) on-demand
+ */
+exports.downloadOrderInvoice = async (req, res) => {
+  const { orderId } = req.params;
+  if (!orderId) {
+    return res.status(400).json({ success: false, message: "Order ID is required" });
+  }
+
+  try {
+    // 1. Check if invoice exists in order_invoice table
+    const [invoiceRows] = await db.query(
+      "SELECT path_url FROM order_invoice WHERE order_id = ? ORDER BY id DESC LIMIT 1",
+      [orderId]
+    );
+
+    if (invoiceRows.length > 0 && invoiceRows[0].path_url) {
+      const url = invoiceRows[0].path_url.trim();
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        return res.redirect(url);
+      }
+    }
+
+    // 2. If not already stored, generate invoice on-demand from order & product data
+    const [orders] = await db.query("SELECT * FROM orders WHERE id = ?", [orderId]);
+    if (orders.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const order = orders[0];
+    const [userRows] = await db.query("SELECT * FROM users WHERE id = ?", [order.userId]);
+    const user = userRows[0] || { name: "Customer", lastname: "", email: "support@prabhupooja.com", mobile: "N/A" };
+
+    let productIds = [];
+    try {
+      productIds = JSON.parse(order.productId);
+      if (!Array.isArray(productIds)) productIds = [productIds];
+    } catch (e) {
+      if (typeof order.productId === "string" && order.productId.includes(",")) {
+        productIds = order.productId.split(",").map((s) => s.trim());
+      } else {
+        productIds = [order.productId];
+      }
+    }
+    productIds = productIds.filter(Boolean);
+
+    let productRows = [];
+    if (productIds.length > 0) {
+      const placeholders = productIds.map(() => "?").join(",");
+      const [prods] = await db.query(`SELECT * FROM products WHERE id IN (${placeholders})`, productIds);
+      productRows = prods;
+    }
+
+    let quantities = [1];
+    try {
+      quantities = JSON.parse(order.quantity);
+    } catch (e) {
+      quantities = [order.quantity || 1];
+    }
+
+    let shippingAddress = {};
+    try {
+      shippingAddress = typeof order.shipping_address === "string" ? JSON.parse(order.shipping_address) : order.shipping_address;
+    } catch (e) {
+      shippingAddress = { address: order.shipping_address || "Standard Delivery Address" };
+    }
+
+    const filePath = await generateInvoice({
+      user,
+      products: productRows,
+      order,
+      quantities: Array.isArray(quantities) ? quantities : [quantities],
+      address: shippingAddress || {},
+    });
+
+    const fileName = path.basename(filePath);
+    const backendBaseUrl = process.env.BACKEND_URL || "http://localhost:3002";
+    const localUrl = `${backendBaseUrl}/invoices/${fileName}`;
+
+    // Save for future calls
+    try {
+      await db.query(
+        `INSERT INTO order_invoice (user_id, order_id, path_url) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE path_url = VALUES(path_url)`,
+        [order.userId, orderId, localUrl]
+      );
+    } catch (iErr) {}
+
+    return res.sendFile(filePath);
+  } catch (error) {
+    console.error("Error generating invoice on-demand:", error);
+    return res.status(500).json({ success: false, message: "Failed to generate invoice", error: error.message });
   }
 };

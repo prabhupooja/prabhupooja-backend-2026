@@ -25,6 +25,59 @@ async function runMigrations() {
     await db.query(createOrderReturnTable);
     console.log("✅ Table 'order_return' checked/created successfully.");
 
+    // Add missing columns to order_return if not exists
+    const orderReturnCols = [
+      { name: "request_type", def: "VARCHAR(50) DEFAULT 'refund'" },
+      { name: "upi_id", def: "VARCHAR(255) DEFAULT NULL" },
+      { name: "account_holder_name", def: "VARCHAR(255) DEFAULT NULL" },
+      { name: "bank_name", def: "VARCHAR(255) DEFAULT NULL" },
+      { name: "account_number", def: "VARCHAR(255) DEFAULT NULL" },
+      { name: "ifsc_code", def: "VARCHAR(50) DEFAULT NULL" },
+      { name: "admin_status", def: "VARCHAR(50) DEFAULT 'pending'" },
+      { name: "admin_remarks", def: "TEXT DEFAULT NULL" },
+      { name: "payment_receipt", def: "VARCHAR(500) DEFAULT NULL" },
+      { name: "transaction_reference", def: "VARCHAR(255) DEFAULT NULL" },
+      { name: "replacement_tracking_id", def: "VARCHAR(255) DEFAULT NULL" },
+      { name: "replacement_courier", def: "VARCHAR(255) DEFAULT NULL" },
+      { name: "replacement_status", def: "VARCHAR(100) DEFAULT NULL" },
+      { name: "proof_images", def: "TEXT DEFAULT NULL" },
+      { name: "wallet_deducted", def: "TINYINT(1) DEFAULT 0" }
+    ];
+
+    const [existingRetCols] = await db.query("SHOW COLUMNS FROM order_return");
+    const existingRetColNames = existingRetCols.map(c => c.Field.toLowerCase());
+
+    for (const col of orderReturnCols) {
+      if (!existingRetColNames.includes(col.name.toLowerCase())) {
+        try {
+          await db.query(`ALTER TABLE order_return ADD COLUMN ${col.name} ${col.def}`);
+          console.log(`✓ Added column ${col.name} to order_return`);
+        } catch (colErr) {
+          console.warn(`Note on adding column ${col.name}:`, colErr.message);
+        }
+      }
+    }
+
+    // Ensure orders table has cancelled_by, tracking_number, courier_name
+    try {
+      const [orderCols] = await db.query("SHOW COLUMNS FROM orders");
+      const orderColNames = orderCols.map(c => c.Field.toLowerCase());
+      if (!orderColNames.includes("cancelled_by")) {
+        await db.query("ALTER TABLE orders ADD COLUMN cancelled_by VARCHAR(50) DEFAULT NULL");
+        console.log("✅ Added 'cancelled_by' column to 'orders' table.");
+      }
+      if (!orderColNames.includes("tracking_number")) {
+        await db.query("ALTER TABLE orders ADD COLUMN tracking_number VARCHAR(255) DEFAULT NULL");
+        console.log("✅ Added 'tracking_number' column to 'orders' table.");
+      }
+      if (!orderColNames.includes("courier_name")) {
+        await db.query("ALTER TABLE orders ADD COLUMN courier_name VARCHAR(255) DEFAULT NULL");
+        console.log("✅ Added 'courier_name' column to 'orders' table.");
+      }
+    } catch (oErr) {
+      console.warn("Note on orders table columns:", oErr.message);
+    }
+
     // 2. Create event_bookings table if not exists
     const createEventBookingsTable = `
       CREATE TABLE IF NOT EXISTS event_bookings (
@@ -329,6 +382,81 @@ async function runMigrations() {
       console.log("✅ Table 'ecommerce_banner' verified/created/updated successfully.");
     } catch (ecomErr) {
       console.warn("Note on ecommerce_banner table migration:", ecomErr.message);
+    }
+
+    // 6. Ensure sellers table has all required columns for registration, documents, and dashboard
+    try {
+      const [sellerCols] = await db.query("SHOW COLUMNS FROM sellers");
+      const sellerColNames = sellerCols.map(c => c.Field);
+
+      if (!sellerColNames.includes('city')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN city VARCHAR(100) NULL AFTER address");
+        console.log("✅ Added 'city' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('state')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN state VARCHAR(100) NULL AFTER city");
+        console.log("✅ Added 'state' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('pincode')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN pincode VARCHAR(20) NULL AFTER state");
+        console.log("✅ Added 'pincode' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('business_type')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN business_type VARCHAR(100) NULL AFTER pincode");
+        console.log("✅ Added 'business_type' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('category')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN category VARCHAR(255) NULL AFTER business_type");
+        console.log("✅ Added 'category' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('gst_certificate')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN gst_certificate VARCHAR(500) NULL AFTER gst");
+        console.log("✅ Added 'gst_certificate' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('bank_name')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN bank_name VARCHAR(255) NULL AFTER address_proof_status");
+        console.log("✅ Added 'bank_name' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('account_holder_name')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN account_holder_name VARCHAR(255) NULL AFTER bank_name");
+        console.log("✅ Added 'account_holder_name' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('account_number')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN account_number VARCHAR(100) NULL AFTER account_holder_name");
+        console.log("✅ Added 'account_number' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('ifsc_number')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN ifsc_number VARCHAR(50) NULL AFTER account_number");
+        console.log("✅ Added 'ifsc_number' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('cancelled_cheque')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN cancelled_cheque VARCHAR(500) NULL AFTER ifsc_number");
+        console.log("✅ Added 'cancelled_cheque' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('bank_status')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN bank_status ENUM('initially', 'pending', 'approved', 'rejected') DEFAULT 'initially' AFTER cancelled_cheque");
+        console.log("✅ Added 'bank_status' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('status')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN status ENUM('pending', 'active', 'suspended', 'rejected') DEFAULT 'pending' AFTER verified");
+        console.log("✅ Added 'status' column to 'sellers' table.");
+      }
+      if (!sellerColNames.includes('updated_at')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+        console.log("✅ Added 'updated_at' column to 'sellers' table.");
+      }
+
+      console.log("✅ Table 'sellers' verified and updated with all KYC & document columns.");
+    } catch (sellerErr) {
+      console.warn("Note on sellers table migration:", sellerErr.message);
+    }
+
+    // Ensure all active products have verified = 1 so they are live on website
+    try {
+      await db.query("UPDATE products SET verified = 1 WHERE verified = 0 OR verified IS NULL");
+      console.log("✅ Verified all active products in 'products' table (verified = 1).");
+    } catch (prodVerErr) {
+      console.warn("Note on products verified update:", prodVerErr.message);
     }
 
     console.log("=== MIGRATIONS COMPLETE ===");
