@@ -334,15 +334,18 @@ exports.update = async (req, res) => {
     Benefits,
     UsageAndCareInstructions,
     newImages,
+    existingImages,
+    existing_images,
+    verified,
   } = req.body;
   const uploadedImages = req.files
     ? req.files.map((file) => file.location || file.originalname)
-    : [];
+    : (req.file ? [req.file.location || req.file.originalname] : []);
 
   try {
-    const data = await db.query(`SELECT * FROM products WHERE id = ?`, [id]);
+    const [data] = await db.query(`SELECT * FROM products WHERE id = ?`, [id]);
 
-    if (!data.length) {
+    if (!data || !data.length) {
       return res.status(404).send({
         success: false,
         message: "Product not found",
@@ -352,95 +355,133 @@ exports.update = async (req, res) => {
     let currentImages = [];
 
     try {
-      currentImages = JSON.parse(currentProduct.image || "[]");
+      if (typeof currentProduct.image === "string") {
+        currentImages = JSON.parse(currentProduct.image || "[]");
+      } else if (Array.isArray(currentProduct.image)) {
+        currentImages = currentProduct.image;
+      } else if (currentProduct.image) {
+        currentImages = [currentProduct.image];
+      }
+      if (!Array.isArray(currentImages)) currentImages = [currentImages];
     } catch (err) {
-      currentImages = [];
+      if (currentProduct.image && typeof currentProduct.image === "string" && currentProduct.image.includes(",")) {
+        currentImages = currentProduct.image.split(",").map((s) => s.trim());
+      } else if (currentProduct.image) {
+        currentImages = [currentProduct.image];
+      } else {
+        currentImages = [];
+      }
     }
 
     let updateFields = [];
     let values = [];
 
-    if (productName) {
+    if (productName !== undefined) {
       updateFields.push("productName = ?");
       values.push(productName);
     }
-    if (theme) {
+    if (theme !== undefined) {
       updateFields.push("theme = ?");
       values.push(theme);
     }
-    if (brand) {
+    if (brand !== undefined) {
       updateFields.push("brand = ?");
       values.push(brand);
     }
-    if (colour) {
+    if (colour !== undefined) {
       updateFields.push("colour = ?");
       values.push(colour);
     }
-    if (style) {
+    if (style !== undefined) {
       updateFields.push("style = ?");
       values.push(style);
     }
-    if (material) {
+    if (material !== undefined) {
       updateFields.push("material = ?");
       values.push(material);
     }
-    if (specialFeature) {
+    if (specialFeature !== undefined) {
       updateFields.push("specialFeature = ?");
       values.push(specialFeature);
     }
-
-    if (noOfItems) {
+    if (noOfItems !== undefined) {
       updateFields.push("noOfItems = ?");
       values.push(noOfItems);
     }
-    if (price) {
+    if (price !== undefined) {
       updateFields.push("price = ?");
       values.push(price);
     }
-    if (offerPrice) {
+    if (offerPrice !== undefined) {
       updateFields.push("offerPrice = ?");
       values.push(offerPrice);
     }
-    if (description) {
+    if (description !== undefined) {
       updateFields.push("description = ?");
       values.push(description);
     }
-    if (Height) {
+    if (Height !== undefined) {
       updateFields.push("Height = ?");
       values.push(Height);
     }
-    if (Dimension) {
+    if (Dimension !== undefined) {
       updateFields.push("Dimension = ?");
       values.push(Dimension);
     }
-    if (Weight) {
+    if (Weight !== undefined) {
       updateFields.push("Weight = ?");
       values.push(Weight);
     }
-    if (ProductCode) {
+    if (ProductCode !== undefined) {
       updateFields.push("ProductCode = ?");
       values.push(ProductCode);
     }
-    if (ProductHighlights) {
+    if (ProductHighlights !== undefined) {
       updateFields.push("ProductHighlights = ?");
       values.push(ProductHighlights);
     }
-    if (Benefits) {
+    if (Benefits !== undefined) {
       updateFields.push("Benefits = ?");
       values.push(Benefits);
     }
-    if (UsageAndCareInstructions) {
+    if (UsageAndCareInstructions !== undefined) {
       updateFields.push("UsageAndCareInstructions = ?");
       values.push(UsageAndCareInstructions);
     }
+    if (verified !== undefined) {
+      updateFields.push("verified = ?");
+      values.push(Number(verified));
+    }
 
-    if (uploadedImages.length && !newImages) {
+    const rawExisting = existingImages !== undefined ? existingImages : existing_images;
+    if (rawExisting !== undefined || uploadedImages.length > 0) {
+      let retainedImages = [];
+      if (rawExisting !== undefined && rawExisting !== null) {
+        if (Array.isArray(rawExisting)) {
+          retainedImages = rawExisting;
+        } else if (typeof rawExisting === "string") {
+          try {
+            const parsed = JSON.parse(rawExisting);
+            retainedImages = Array.isArray(parsed) ? parsed : [parsed];
+          } catch (e) {
+            if (rawExisting.includes(",")) {
+              retainedImages = rawExisting.split(",").map((s) => s.trim());
+            } else if (rawExisting.trim()) {
+              retainedImages = [rawExisting.trim()];
+            }
+          }
+        }
+      } else {
+        retainedImages = currentImages;
+      }
+
+      const finalImages = [...retainedImages, ...uploadedImages].slice(0, 5);
       updateFields.push("image = ?");
-      values.push(JSON.stringify(uploadedImages));
+      values.push(JSON.stringify(finalImages));
     } else if (newImages) {
       let parsedNewImages;
       try {
-        parsedNewImages = JSON.parse(newImages);
+        parsedNewImages = typeof newImages === "string" ? JSON.parse(newImages) : newImages;
       } catch (err) {
         return res.status(400).send({
           success: false,
@@ -701,11 +742,13 @@ exports.updateByMerchant = async (req, res) => {
     Benefits,
     UsageAndCareInstructions,
     newImages,
+    existingImages,
+    existing_images,
   } = req.body;
 
   const uploadedImages = req.files
     ? req.files.map((file) => file.location || file.originalname)
-    : (req.file ? [req.file.location] : []);
+    : (req.file ? [req.file.location || req.file.originalname] : []);
 
   try {
     const [data] = await db.query(
@@ -713,7 +756,7 @@ exports.updateByMerchant = async (req, res) => {
       [id, merchantId]
     );
 
-    if (data.length === 0) {
+    if (!data || data.length === 0) {
       return res.status(404).json({
         success: false,
         message: "Product not found or does not belong to this merchant",
@@ -723,94 +766,125 @@ exports.updateByMerchant = async (req, res) => {
     const currentProduct = data[0];
     let currentImages = [];
     try {
-      currentImages = JSON.parse(currentProduct.image || "[]");
+      if (typeof currentProduct.image === "string") {
+        currentImages = JSON.parse(currentProduct.image || "[]");
+      } else if (Array.isArray(currentProduct.image)) {
+        currentImages = currentProduct.image;
+      } else if (currentProduct.image) {
+        currentImages = [currentProduct.image];
+      }
+      if (!Array.isArray(currentImages)) currentImages = [currentImages];
     } catch (err) {
-      currentImages = [];
+      if (currentProduct.image && typeof currentProduct.image === "string" && currentProduct.image.includes(",")) {
+        currentImages = currentProduct.image.split(",").map((s) => s.trim());
+      } else if (currentProduct.image) {
+        currentImages = [currentProduct.image];
+      } else {
+        currentImages = [];
+      }
     }
 
     let updateFields = [];
     let values = [];
 
-    if (productName) {
+    if (productName !== undefined) {
       updateFields.push("productName = ?");
       values.push(productName);
     }
-    if (theme) {
+    if (theme !== undefined) {
       updateFields.push("theme = ?");
       values.push(theme);
     }
-    if (brand) {
+    if (brand !== undefined) {
       updateFields.push("brand = ?");
       values.push(brand);
     }
-    if (colour) {
+    if (colour !== undefined) {
       updateFields.push("colour = ?");
       values.push(colour);
     }
-    if (style) {
+    if (style !== undefined) {
       updateFields.push("style = ?");
       values.push(style);
     }
-    if (material) {
+    if (material !== undefined) {
       updateFields.push("material = ?");
       values.push(material);
     }
-    if (specialFeature) {
+    if (specialFeature !== undefined) {
       updateFields.push("specialFeature = ?");
       values.push(specialFeature);
     }
-    if (noOfPieces) {
-      updateFields.push("noOfPieces = ?");
-      values.push(noOfPieces);
-    }
-    if (noOfItems) {
+    if (noOfPieces !== undefined || noOfItems !== undefined) {
       updateFields.push("noOfItems = ?");
-      values.push(noOfItems);
+      values.push(noOfItems || noOfPieces);
     }
-    if (price) {
+    if (price !== undefined) {
       updateFields.push("price = ?");
       values.push(price);
     }
-    if (offerPrice) {
+    if (offerPrice !== undefined) {
       updateFields.push("offerPrice = ?");
       values.push(offerPrice);
     }
-    if (description) {
+    if (description !== undefined) {
       updateFields.push("description = ?");
       values.push(description);
     }
-    if (Height) {
+    if (Height !== undefined) {
       updateFields.push("Height = ?");
       values.push(Height);
     }
-    if (Dimension) {
+    if (Dimension !== undefined) {
       updateFields.push("Dimension = ?");
       values.push(Dimension);
     }
-    if (Weight) {
+    if (Weight !== undefined) {
       updateFields.push("Weight = ?");
       values.push(Weight);
     }
-    if (ProductCode) {
+    if (ProductCode !== undefined) {
       updateFields.push("ProductCode = ?");
       values.push(ProductCode);
     }
-    if (ProductHighlights) {
+    if (ProductHighlights !== undefined) {
       updateFields.push("ProductHighlights = ?");
       values.push(ProductHighlights);
     }
-    if (Benefits) {
+    if (Benefits !== undefined) {
       updateFields.push("Benefits = ?");
       values.push(Benefits);
     }
-    if (UsageAndCareInstructions) {
+    if (UsageAndCareInstructions !== undefined) {
       updateFields.push("UsageAndCareInstructions = ?");
       values.push(UsageAndCareInstructions);
     }
 
-    if (uploadedImages.length > 0 && !newImages) {
+    const rawExisting = existingImages !== undefined ? existingImages : existing_images;
+    if (rawExisting !== undefined || uploadedImages.length > 0) {
+      let retainedImages = [];
+      if (rawExisting !== undefined && rawExisting !== null) {
+        if (Array.isArray(rawExisting)) {
+          retainedImages = rawExisting;
+        } else if (typeof rawExisting === "string") {
+          try {
+            const parsed = JSON.parse(rawExisting);
+            retainedImages = Array.isArray(parsed) ? parsed : [parsed];
+          } catch (e) {
+            if (rawExisting.includes(",")) {
+              retainedImages = rawExisting.split(",").map((s) => s.trim());
+            } else if (rawExisting.trim()) {
+              retainedImages = [rawExisting.trim()];
+            }
+          }
+        }
+      } else {
+        retainedImages = currentImages;
+      }
+
+      const finalImages = [...retainedImages, ...uploadedImages].slice(0, 5);
       updateFields.push("image = ?");
-      values.push(JSON.stringify(uploadedImages));
+      values.push(JSON.stringify(finalImages));
     } else if (newImages) {
       let parsedNewImages;
       try {
@@ -845,9 +919,7 @@ exports.updateByMerchant = async (req, res) => {
     values.push(id, merchantId);
 
     await db.query(
-      `UPDATE products SET ${updateFields.join(
-        ", "
-      )} WHERE id = ? AND merchantId = ?`,
+      `UPDATE products SET ${updateFields.join(", ")} WHERE id = ? AND merchantId = ?`,
       values
     );
 
