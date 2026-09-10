@@ -437,8 +437,12 @@ async function runMigrations() {
         await db.query("ALTER TABLE sellers ADD COLUMN bank_status ENUM('initially', 'pending', 'approved', 'rejected') DEFAULT 'initially' AFTER cancelled_cheque");
         console.log("✅ Added 'bank_status' column to 'sellers' table.");
       }
+      if (!sellerColNames.includes('verified')) {
+        await db.query("ALTER TABLE sellers ADD COLUMN verified TINYINT(1) DEFAULT 0");
+        console.log("✅ Added 'verified' column to 'sellers' table.");
+      }
       if (!sellerColNames.includes('status')) {
-        await db.query("ALTER TABLE sellers ADD COLUMN status ENUM('pending', 'active', 'suspended', 'rejected') DEFAULT 'pending' AFTER verified");
+        await db.query("ALTER TABLE sellers ADD COLUMN status ENUM('pending', 'active', 'suspended', 'rejected') DEFAULT 'pending'");
         console.log("✅ Added 'status' column to 'sellers' table.");
       }
       if (!sellerColNames.includes('updated_at')) {
