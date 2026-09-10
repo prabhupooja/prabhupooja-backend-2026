@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "migrate": "node scripts/migrations.js",
     "sync-db": "node scripts/sync-live-db.js"
   },
   "keywords": [],
