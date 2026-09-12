@@ -25,12 +25,13 @@ const upload = multer({
         },
     }),
 });
+router.get('/get', blog.getAll);
 router.post("/createImage", upload.array("image", 10), AdminverifyToken, blog.create);
 router.get('/getImage', blog.getAll);
 router.get('/getImageby/:id', blog.getById);
-router.put('/updateImage/:id',AdminverifyToken,blog.updateBlog);
-router.delete('/deleteImage/:id',AdminverifyToken,blog.deleteBlog);
-router.put('/update/:id',upload.single('image'), AdminverifyToken, blog.update);
+router.put('/updateImage/:id', AdminverifyToken, blog.updateBlog);
+router.delete('/deleteImage/:id', AdminverifyToken, blog.deleteBlog);
+router.put('/update/:id', upload.single('image'), AdminverifyToken, blog.update);
 router.delete('/delete/:id', AdminverifyToken, blog.delete);
 router.post('/comment/:id', blog.comment);
 router.post('/like/:id', blog.likeBlog);

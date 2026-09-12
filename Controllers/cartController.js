@@ -232,35 +232,30 @@ exports.update = async (req, res) => {
 
 exports.delete = async (req, res) => {
     const { id } = req.params;
-    console.log("Deleting cart id:", id);
+    const userId = req.user?.id || req.body?.user_id || req.query?.user_id;
 
     try {
-        const [rows] = await db.query(`SELECT * FROM cart WHERE productId = ?`, [id]);
-        if (!rows.length) {
-            return res.status(404).send({
-                success: false,
-                message: "Cart not found"
-            });
+        let deleteQuery = `DELETE FROM cart WHERE productId = ? OR id = ?`;
+        let queryParams = [id, id];
+
+        if (userId) {
+            deleteQuery = `DELETE FROM cart WHERE (productId = ? OR id = ?) AND user_id = ?`;
+            queryParams = [id, id, userId];
         }
 
-        const [result] = await db.query(`DELETE FROM cart WHERE productId = ?`, [id]);
-
-        if (result.affectedRows === 0) {
-            return res.status(400).send({
-                success: false,
-                message: "Failed to delete cart"
-            });
-        }
+        const [result] = await db.query(deleteQuery, queryParams);
 
         return res.status(200).send({
             success: true,
-            message: "Cart deleted successfully"
+            message: "Cart item removed successfully",
+            affectedRows: result.affectedRows,
         });
     } catch (error) {
-        console.error(error);
+        console.error("Cart delete error:", error);
         return res.status(500).send({
             success: false,
-            message: "Internal Server Error"
+            message: "Internal Server Error",
+            error: error.message,
         });
     }
 };

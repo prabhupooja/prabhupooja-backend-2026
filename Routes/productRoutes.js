@@ -59,13 +59,14 @@ router.put('/verifyProduct/:productId/:merchantId', clearProductCache, product.v
 router.put('/rejectProduct/:productId/:merchantId', clearProductCache, product.rejectProduct);
 router.get('/reletedProduct/:id', cacheMiddleware(600, "products"), product.reletedProduct);
 router.post('/addReview', upload.array("comment_image", 5), product.productReview);
-router.get('/getReview/:productId', cacheMiddleware(300, "products"), product.getProductReviews);
+router.get('/getReview/:productId', product.getProductReviews);
 router.post('/wishList', product.wishList);
 router.get('/getWishlist/:user_id', product.getWishlist);
 router.get('/getLikedProduct/:user_id/:product_id', product.getWishlistStatus);
 router.delete('/deleteWishlistProduct/:user_id/:product_id', product.deleteWishlistItem);
-router.get('/getAllReview', cacheMiddleware(300, "products"), product.getAllReview);
+router.get('/getAllReview', product.getAllReview);
 router.delete('/deleteReview/:review_id', product.deleteReview);
+router.delete('/deleteReview/:id', product.deleteReview);
 router.put('/productActive/:productId', clearProductCache, product.productActive);
 router.get('/getAllProductsByfillter', cacheMiddleware(300, "products"), product.getAllProductsByfillter);
 router.get('/getAllProductsByFilter', cacheMiddleware(300, "products"), product.getAllProductsByfillter);

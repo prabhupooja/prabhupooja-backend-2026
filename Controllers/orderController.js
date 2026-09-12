@@ -15,6 +15,41 @@ const {
 } = require("../Controllers/MobilePushNotification");
 
 
+const formatSingleProductImage = (img) => {
+  if (!img || img === "null" || img === "undefined") return null;
+  const clean = typeof img === "string" ? img.trim() : "";
+  if (!clean || clean === "null" || clean === "undefined") return null;
+  if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("data:") || clean.startsWith("blob:")) return clean;
+  const baseUrl = process.env.BACKEND_URL || "http://localhost:3002";
+  const cleanBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return `${cleanBase}/uploads/${clean.replace(/^\/+/, "")}`;
+};
+
+const formatProductImage = (rawImage) => {
+  if (!rawImage) return [];
+  let list = [];
+  if (Array.isArray(rawImage)) {
+    list = rawImage.flat(Infinity);
+  } else if (typeof rawImage === "string") {
+    const trimmed = rawImage.trim();
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        list = Array.isArray(parsed) ? parsed.flat(Infinity) : [parsed];
+      } catch (e) {
+        list = [trimmed];
+      }
+    } else if (trimmed.includes(",")) {
+      list = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+    } else {
+      list = [trimmed];
+    }
+  } else {
+    list = [rawImage];
+  }
+  return list.map(formatSingleProductImage).filter(Boolean);
+};
+
 const uploadPdfToS3 = async (filePath) => {
   const fileName = path.basename(filePath);
   const backendBaseUrl = process.env.BACKEND_URL || "http://localhost:3002";
@@ -330,7 +365,26 @@ exports.create = async (req, res) => {
 
     const merchantArray = Array.isArray(marchentId) ? marchentId : [marchentId];
     const quantityArray = Array.isArray(quantity) ? quantity : [quantity];
-    const imagesArray = Array.isArray(images) ? images : [images];
+    
+    // Clean and flatten image array to avoid nested stringified structures
+    let imagesArray = [];
+    if (Array.isArray(images)) {
+      imagesArray = images.flat(Infinity).filter((img) => typeof img === "string" && img.length > 3);
+    } else if (typeof images === "string") {
+      const trimmed = images.trim();
+      if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          imagesArray = Array.isArray(parsed) ? parsed.flat(Infinity) : [parsed];
+        } catch (e) {
+          imagesArray = [trimmed];
+        }
+      } else if (trimmed.includes(",")) {
+        imagesArray = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+      } else if (trimmed) {
+        imagesArray = [trimmed];
+      }
+    }
 
     const [result] = await db.query(
       `INSERT INTO orders (productId, userId, quantity, totalPrice, createdAt, booking, images, paymentMethod, status, merchantId, shipping_address, payment_id)
@@ -352,9 +406,9 @@ exports.create = async (req, res) => {
 
     let productRows = [];
 
-    for (const productId of productIdArray) {
+    for (const pId of productIdArray) {
       const [rows] = await db.query("SELECT * FROM products WHERE id = ?", [
-        productId,
+        pId,
       ]);
 
       if (rows.length > 0) {
@@ -381,7 +435,7 @@ exports.create = async (req, res) => {
     }
 
     const [user] = await db.query(
-      "SELECT name, email FROM users WHERE id = ?",
+      "SELECT name, lastname, email FROM users WHERE id = ?",
       [userId]
     );
     const order = {
@@ -392,7 +446,7 @@ exports.create = async (req, res) => {
     if (user && user[0]?.email) {
       try {
         const filePath = await generateInvoice({
-          user: userRows[0],
+          user: userRows[0] || user[0],
           products: productRows,
           order: order,
           quantities: quantityArray,
@@ -409,8 +463,8 @@ exports.create = async (req, res) => {
         const mailOptions = {
           from: process.env.email,
           to: user[0].email,
-          subject: "Order Confirmation",
-          text: `Dear ${user[0].name},\n\nYour order has been placed. Thank you for shopping with us!\n\nBest regards,\nPrabhuPooja`,
+          subject: "Order Confirmation - PrabhuPooja",
+          text: `Dear ${user[0].name},\n\nYour order #${result.insertId} has been placed successfully. Thank you for shopping with us!\n\nBest regards,\nPrabhuPooja`,
           attachments: [
             {
               filename: "order-invoice.pdf",
@@ -421,10 +475,9 @@ exports.create = async (req, res) => {
 
         await transporter.sendMail(mailOptions);
 
-        const fileName = filePath.split("/").pop().split("\\").pop();
         let invoiceUrl = await uploadPdfToS3(filePath);
 
-        const [invoice] = await db.query(
+        await db.query(
           `INSERT INTO order_invoice (user_id, order_id, path_url) VALUES (?, ?, ?)`,
           [userId, result.insertId, invoiceUrl]
         );
@@ -452,14 +505,30 @@ exports.create = async (req, res) => {
       [userId, orderId, stepStatus]
     );
 
+    // 1. Notify Seller(s)
+    const customerName = user && user[0] ? `${user[0].name || 'Devotee'}` : 'Devotee';
     for (let i = 0; i < merchantArray.length; i++) {
       const merchantId = merchantArray[i];
-      await sendNotification(merchantId, `New order placed by ${user[0].name}`);
+      try {
+        await sendNotification(merchantId, `New order #${orderId} of ₹${totalPrice} placed by ${customerName}`);
+      } catch (sErr) {
+        console.warn("Seller notification warning:", sErr.message);
+      }
+    }
+
+    // 2. Notify Customer (In-App Socket + Mobile Push Notification)
+    try {
+      const customerMsg = `Your sacred order #${orderId} of ₹${totalPrice} has been placed successfully!`;
+      if (sendUserNotification) await sendUserNotification(userId, "Order Placed Successfully", customerMsg);
+      if (sendNotificationToUser) await sendNotificationToUser("Order Placed Successfully", customerMsg, userId);
+    } catch (uErr) {
+      console.warn("Customer notification warning:", uErr.message);
     }
 
     return res.status(201).send({
       success: true,
       message: "Order created successfully",
+      orderId: orderId,
     });
   } catch (error) {
     console.error("Unexpected error:", error);
@@ -712,16 +781,6 @@ exports.getProductByOrderId = async (req, res) => {
       error: error.message,
     });
   }
-};
-
-const formatProductImage = (img) => {
-  if (!img || img === "null" || img === "undefined") return null;
-  const clean = typeof img === "string" ? img.trim() : "";
-  if (!clean || clean === "null" || clean === "undefined") return null;
-  if (clean.startsWith("http://") || clean.startsWith("https://") || clean.startsWith("data:")) return clean;
-  const baseUrl = process.env.BACKEND_URL || "https://api.prabhupooja.com";
-  const cleanBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-  return `${cleanBase}/uploads/${clean.replace(/^\/+/, "")}`;
 };
 
 exports.getbyId = async (req, res) => {
@@ -1525,6 +1584,15 @@ exports.orderTrackingByUser = async (req, res) => {
       }
     }
 
+    let courierInfo = null;
+    let trackingNumberInfo = null;
+    if (Array.isArray(parsedTrackingStatus)) {
+      for (const step of parsedTrackingStatus) {
+        if (step.courier) courierInfo = step.courier;
+        if (step.trackingNumber) trackingNumberInfo = step.trackingNumber;
+      }
+    }
+
     return res.status(200).send({
       success: true,
       order: {
@@ -1534,6 +1602,8 @@ exports.orderTrackingByUser = async (req, res) => {
         orderStatus: row.orderPaymentStatus || row.orderStatus || "Paid",
         order_progress_status: row.order_progress_status || row.orderStatus || "order_placed",
         cancel_reason: row.cancel_reason || null,
+        courier: courierInfo,
+        trackingNumber: trackingNumberInfo,
         estimated_delivery_start: row.estimated_delivery_start,
         estimated_delivery_end: row.estimated_delivery_end,
         paymentMethod: row.paymentMethod,
@@ -1713,6 +1783,13 @@ exports.statusUpdate = async (req, res) => {
     paymentMethod,
     cancelReason,
     cancel_reason,
+    courierName,
+    courier_name,
+    courierPartner,
+    trackingNumber,
+    tracking_number,
+    awbNumber,
+    awb_number,
   } = req.body;
 
   if (!orderId) {
@@ -1720,6 +1797,8 @@ exports.statusUpdate = async (req, res) => {
   }
 
   const currentDate = new Date().toISOString().split("T")[0];
+  const finalCourier = courierName || courier_name || courierPartner || "";
+  const finalTrackingNum = trackingNumber || tracking_number || awbNumber || awb_number || "";
 
   try {
     const orderQuery = `SELECT id AS orderId, userId, order_status, status FROM orders WHERE id = ?`;
@@ -1810,7 +1889,14 @@ exports.statusUpdate = async (req, res) => {
         return { ...step, status: isDelivered || isDispatched ? "completed" : "processing", date: currentDate };
       }
       if (stepName.includes("dispatch") || stepName.includes("transit") || stepName.includes("ship")) {
-        return { ...step, status: isDelivered ? "completed" : (isDispatched ? "processing" : "pending"), date: currentDate };
+        const itemObj = { 
+          ...step, 
+          status: isDelivered ? "completed" : (isDispatched ? "processing" : "pending"), 
+          date: currentDate 
+        };
+        if (finalCourier) itemObj.courier = finalCourier;
+        if (finalTrackingNum) itemObj.trackingNumber = finalTrackingNum;
+        return itemObj;
       }
       if (stepName.includes("deliver")) {
         return { ...step, status: isDelivered ? "completed" : "pending", date: currentDate };
@@ -1830,19 +1916,31 @@ exports.statusUpdate = async (req, res) => {
       );
     }
 
-    // 4. Send Notifications
+    // 4. Send Smart Notifications to User
     try {
       if (currentOrder.userId) {
-        await sendNotificationToUser(
-          "Order Update",
-          `Hello! Your order status has changed to ${resolvedProgressStatus}. Track your order 📱`,
-          currentOrder.userId
-        );
-        await sendUserNotification(
-          currentOrder.userId,
-          "Order Update",
-          `Hello! Your order status has changed to ${resolvedProgressStatus}. Track your order 📱`
-        );
+        let notifTitle = "Order Update";
+        let notifBody = `Hello! Your order status has changed to ${resolvedProgressStatus}. Track your order 📱`;
+
+        if (isDispatched) {
+          notifTitle = "Order Dispatched 🚚";
+          if (finalCourier && finalTrackingNum) {
+            notifBody = `Your sacred order #${orderId} is dispatched via ${finalCourier} (AWB: ${finalTrackingNum}). Track delivery on app!`;
+          } else if (finalCourier) {
+            notifBody = `Your sacred order #${orderId} is dispatched via ${finalCourier}.`;
+          } else {
+            notifBody = `Your sacred order #${orderId} has been dispatched and is on its way!`;
+          }
+        } else if (isDelivered) {
+          notifTitle = "Order Delivered ✨";
+          notifBody = `Blessed! Your sacred order #${orderId} has been safely delivered. Thank you for choosing PrabhuPooja! 🙏`;
+        } else if (isCancelled) {
+          notifTitle = "Order Cancelled";
+          notifBody = `Your order #${orderId} has been cancelled. ${resolvedCancelReason ? `Reason: ${resolvedCancelReason}` : ''}`;
+        }
+
+        await sendNotificationToUser(notifTitle, notifBody, currentOrder.userId);
+        await sendUserNotification(currentOrder.userId, notifTitle, notifBody);
       }
     } catch (nErr) {
       console.warn("Notification notice:", nErr.message);
@@ -1855,6 +1953,8 @@ exports.statusUpdate = async (req, res) => {
         orderId: Number(orderId),
         orderStatus: resolvedOrderStatus,
         order_progress_status: resolvedProgressStatus,
+        courier: finalCourier || null,
+        trackingNumber: finalTrackingNum || null,
         trackingStatus: trackingTimeline,
       },
     });

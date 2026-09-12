@@ -150,6 +150,13 @@ exports.create = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Product created & published successfully",
+      id: create[0]?.insertId,
+      productId: create[0]?.insertId,
+      data: {
+        id: create[0]?.insertId,
+        insertId: create[0]?.insertId,
+        images: images,
+      },
     });
   } catch (error) {
     console.error("Error in product create/update:", error);
@@ -551,10 +558,45 @@ exports.delete = async (req, res) => {
 
     return res.status(200).send({
       success: true,
-      message: "Product updated successfully",
+      message: "Product deleted successfully",
     });
   } catch (error) {
     console.error(error);
+    return res.status(500).send({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+};
+
+exports.deleteByMerchant = async (req, res) => {
+  const { id } = req.params;
+  const merchantId = req.params.merchantId || (req.user && req.user.id);
+
+  try {
+    let query = `SELECT * FROM products WHERE id = ?`;
+    let params = [id];
+    if (merchantId) {
+      query += ` AND merchantId = ?`;
+      params.push(merchantId);
+    }
+    const [data] = await db.query(query, params);
+
+    if (!data || !data.length) {
+      return res.status(404).send({
+        success: false,
+        message: "Product not found or does not belong to this merchant",
+      });
+    }
+
+    await db.query(`DELETE FROM products WHERE id = ?`, [id]);
+
+    return res.status(200).send({
+      success: true,
+      message: "Product deleted successfully",
+    });
+  } catch (error) {
+    console.error("deleteByMerchant error:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
@@ -1113,61 +1155,111 @@ exports.reletedProduct = async (req, res) => {
 };
 
 exports.productReview = async (req, res) => {
-  const { userId, productId, merchantId, rating, comment, reason } = req.body;
-  const comment_image = req.files ? req.files.map((file) => file.location) : [];
+  let { userId, productId, merchantId, rating, comment, reason } = req.body;
+  const comment_image = req.files
+    ? req.files.map((file) => file.location || file.path || file.filename)
+    : (req.file ? [req.file.location || req.file.path || req.file.filename] : []);
 
   try {
-    if (!userId || !productId || !merchantId) {
+    if (!userId || !productId) {
       return res.status(400).json({
         success: false,
-        message: "All fields are required",
+        message: "User ID and Product ID are required",
       });
     }
+
+    // Auto-fetch merchantId from product if not provided by frontend
+    if (!merchantId) {
+      const [prodRows] = await db.query("SELECT merchantId FROM products WHERE id = ?", [productId]);
+      merchantId = prodRows && prodRows[0] ? prodRows[0].merchantId : 1;
+    }
+
+    const reviewRating = Number(rating) || 5;
 
     // Check if the user has already reviewed this product
     const [existingReview] = await db.query(
-      `SELECT * FROM product_review WHERE userId = ? AND productId = ?`,
+      `SELECT id FROM product_review WHERE userId = ? AND productId = ?`,
       [userId, productId]
     );
 
-    if (existingReview.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "You have already reviewed this product.",
-      });
+    let savedImages = [];
+    if (comment_image && comment_image.length > 0) {
+      savedImages = comment_image;
+    } else if (req.body.reviewImages) {
+      try {
+        savedImages = typeof req.body.reviewImages === "string" ? JSON.parse(req.body.reviewImages) : req.body.reviewImages;
+      } catch (e) {
+        savedImages = [req.body.reviewImages];
+      }
     }
 
-    // Insert the review
-    const result = await db.query(
-      `INSERT INTO product_review(userId, productId, merchantId, rating, comment, comment_image,reason)
-       VALUES (?, ?, ?, ?, ?, ?,?)`,
-      [
-        userId,
-        productId,
-        merchantId,
-        rating,
-        comment,
-        JSON.stringify(comment_image),
-        JSON.stringify(reason),
-      ]
-    );
+    let reasonJson = "[]";
+    if (reason) {
+      if (typeof reason === "object") {
+        reasonJson = JSON.stringify(reason);
+      } else if (typeof reason === "string") {
+        const trimmed = reason.trim();
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+          try {
+            JSON.parse(trimmed);
+            reasonJson = trimmed;
+          } catch {
+            reasonJson = JSON.stringify([trimmed]);
+          }
+        } else {
+          reasonJson = JSON.stringify(trimmed ? [trimmed] : []);
+        }
+      }
+    }
 
-    if (!result) {
-      return res.status(500).json({
-        success: false,
-        message: "Failed to insert review.",
-      });
+    const commentImageJson = JSON.stringify(savedImages || []);
+
+    if (existingReview.length > 0) {
+      // Update existing review
+      await db.query(
+        `UPDATE product_review SET rating = ?, comment = ?, comment_image = ?, reason = ? WHERE id = ?`,
+        [reviewRating, comment || "", commentImageJson, reasonJson, existingReview[0].id]
+      );
+    } else {
+      // Insert new review
+      await db.query(
+        `INSERT INTO product_review (userId, productId, merchantId, rating, comment, comment_image, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId,
+          productId,
+          merchantId,
+          reviewRating,
+          comment || "",
+          commentImageJson,
+          reasonJson,
+        ]
+      );
+    }
+
+    // Auto-recalculate average_rating and total_reviews on products table
+    try {
+      await db.query(
+        `UPDATE products 
+         SET average_rating = (SELECT COALESCE(AVG(rating), 0) FROM product_review WHERE productId = ?),
+             total_reviews = (SELECT COUNT(*) FROM product_review WHERE productId = ?)
+         WHERE id = ?`,
+        [productId, productId, productId]
+      );
+    } catch (rErr) {
+      console.warn("Product rating recalculation warning:", rErr.message);
     }
 
     return res.status(201).json({
       success: true,
-      message: "Product review added successfully!",
+      message: "Product review submitted successfully!",
     });
   } catch (err) {
-    console.error(err);
+    console.error("Error in productReview:", err);
     return res.status(500).json({
       success: false,
       message: "Internal Server Error",
+      error: err.message,
     });
   }
 };
@@ -1184,38 +1276,76 @@ exports.getProductReviews = async (req, res) => {
     }
 
     // Query to get all reviews for the given productId
-    const reviews = await db.query(
+    const [reviews] = await db.query(
       `SELECT 
+         pr.id,
          pr.userId, 
          u.name AS name, 
-        u.lastname AS lastname, 
+         u.lastname AS lastname, 
          u.image AS userImage, 
          pr.rating AS stars, 
+         pr.rating,
          pr.comment AS text, 
+         pr.comment,
          pr.comment_image AS reviewImages,
-         pr.reason
+         pr.reason,
+         pr.created_at AS createdAt,
+         pr.created_at
        FROM product_review pr
-       JOIN users u ON pr.userId = u.id
-       WHERE pr.productId = ?`,
+       LEFT JOIN users u ON pr.userId = u.id
+       WHERE pr.productId = ?
+       ORDER BY pr.id DESC`,
       [productId]
     );
 
-    if (reviews.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No reviews found for this product.",
-      });
-    }
+    const formattedReviews = (reviews || []).map((rev) => {
+      let parsedImages = [];
+      try {
+        if (Array.isArray(rev.reviewImages)) {
+          parsedImages = rev.reviewImages;
+        } else if (typeof rev.reviewImages === "string" && rev.reviewImages.trim().startsWith("[")) {
+          parsedImages = JSON.parse(rev.reviewImages);
+        } else if (rev.reviewImages) {
+          parsedImages = [rev.reviewImages];
+        }
+      } catch (e) {
+        parsedImages = [];
+      }
+
+      let parsedReason = rev.reason;
+      try {
+        if (typeof rev.reason === "string" && (rev.reason.startsWith("[") || rev.reason.startsWith("{"))) {
+          parsedReason = JSON.parse(rev.reason);
+        }
+      } catch (e) {}
+
+      return {
+        id: rev.id,
+        userId: rev.userId,
+        name: `${rev.name || 'Devotee'} ${rev.lastname || ''}`.trim(),
+        userName: `${rev.name || 'Devotee'} ${rev.lastname || ''}`.trim(),
+        userImage: rev.userImage || null,
+        stars: Number(rev.stars || rev.rating || 5),
+        rating: Number(rev.stars || rev.rating || 5),
+        text: rev.text || rev.comment || "",
+        comment: rev.text || rev.comment || "",
+        reviewImages: parsedImages,
+        reason: parsedReason,
+        createdAt: rev.createdAt || rev.created_at || new Date().toISOString(),
+      };
+    });
 
     return res.status(200).json({
       success: true,
-      data: reviews[0],
+      data: formattedReviews,
+      totalReviews: formattedReviews.length,
     });
   } catch (err) {
-    console.error(err);
+    console.error("Error in getProductReviews:", err);
     return res.status(500).json({
       success: false,
       message: "Internal Server Error",
+      data: [],
     });
   }
 };
@@ -1224,10 +1354,12 @@ exports.getAllReview = async (req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT 
-      pr.id,
+        pr.id,
         pr.rating,
         pr.comment,
+        pr.comment_image,
         pr.reason,
+        pr.created_at,
 
         u.id AS user_id,
         u.image AS user_image,
@@ -1248,49 +1380,65 @@ exports.getAllReview = async (req, res) => {
         s.number AS merchant_contact
 
       FROM product_review pr
-      JOIN users u ON pr.userId = u.id
-      JOIN products p ON pr.productId = p.id
-      JOIN sellers s ON pr.merchantId = s.id
+      LEFT JOIN users u ON pr.userId = u.id
+      LEFT JOIN products p ON pr.productId = p.id
+      LEFT JOIN sellers s ON pr.merchantId = s.id
       ORDER BY pr.id DESC
     `);
 
-    const result = rows.map((row) => ({
-      id: row.id,
-      rating: row.rating,
-      comment: row.comment,
-      reason: row.reason,
+    const result = rows.map((row) => {
+      let parsedImages = [];
+      try {
+        if (typeof row.comment_image === "string" && row.comment_image.trim().startsWith("[")) {
+          parsedImages = JSON.parse(row.comment_image);
+        } else if (row.comment_image) {
+          parsedImages = [row.comment_image];
+        }
+      } catch (e) {
+        parsedImages = [];
+      }
 
-      user: {
-        // user_id: row.user_id,
-        userImage: row.user_image,
-        name: row.user_name,
-        lastname: row.user_lastname,
-        email: row.user_email,
-        mobile: row.user_mobile,
-      },
+      return {
+        id: row.id,
+        rating: row.rating,
+        comment: row.comment,
+        reason: row.reason,
+        reviewImages: parsedImages,
+        created_at: row.created_at,
 
-      product: {
-        // product_id: row.product_id,
-        productImage: row.product_image,
-        name: row.product_name,
-        price: row.price,
-        offerPrice: row.offerPrice,
-      },
+        user: {
+          id: row.user_id,
+          userImage: row.user_image,
+          name: row.user_name,
+          lastname: row.user_lastname,
+          email: row.user_email,
+          mobile: row.user_mobile,
+        },
 
-      merchant: {
-        // merchant_id: row.merchant_id,
-        name: row.merchant_name,
-        email: row.merchant_email,
-        contact: row.merchant_contact,
-      },
-    }));
+        product: {
+          id: row.product_id,
+          productImage: row.product_image,
+          name: row.product_name,
+          price: row.price,
+          offerPrice: row.offerPrice,
+        },
+
+        merchant: {
+          id: row.merchant_id,
+          name: row.merchant_name,
+          email: row.merchant_email,
+          contact: row.merchant_contact,
+        },
+      };
+    });
 
     res.status(200).json({
       success: true,
       data: result,
+      totalCount: result.length,
     });
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error in getAllReview:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -1300,32 +1448,50 @@ exports.getAllReview = async (req, res) => {
 
 exports.deleteReview = async (req, res) => {
   try {
-    const { review_id } = req.params;
+    const review_id = req.params.review_id || req.params.id;
 
     if (!review_id) {
       return res.status(400).json({
         success: false,
-        message: "review id is required.",
+        message: "Review ID is required.",
       });
     }
+
+    // Get productId before deleting to update average_rating afterwards
+    const [revRows] = await db.query("SELECT productId FROM product_review WHERE id = ?", [review_id]);
+    const productId = revRows && revRows[0] ? revRows[0].productId : null;
 
     const [result] = await db.query(`DELETE FROM product_review WHERE id = ?`, [
       review_id,
     ]);
 
     if (result.affectedRows > 0) {
+      if (productId) {
+        try {
+          await db.query(
+            `UPDATE products 
+             SET average_rating = (SELECT COALESCE(AVG(rating), 0) FROM product_review WHERE productId = ?),
+                 total_reviews = (SELECT COUNT(*) FROM product_review WHERE productId = ?)
+             WHERE id = ?`,
+            [productId, productId, productId]
+          );
+        } catch (rErr) {
+          console.warn("Recalculate rating warning after delete:", rErr.message);
+        }
+      }
+
       return res.status(200).json({
         success: true,
-        message: "review deleted successfully.",
+        message: "Review deleted successfully.",
       });
     } else {
       return res.status(404).json({
         success: false,
-        message: "review item not found.",
+        message: "Review item not found.",
       });
     }
   } catch (err) {
-    console.error(err);
+    console.error("Error in deleteReview:", err);
     return res.status(500).json({
       success: false,
       message: "Failed to delete review.",

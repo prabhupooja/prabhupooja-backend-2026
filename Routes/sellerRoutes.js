@@ -95,11 +95,19 @@ router.put("/orders/update-status/:id", sellerVerifyToken, seller.updateSellerOr
 router.get("/my-products", sellerVerifyToken, seller.getSellerProducts);
 router.get("/products", sellerVerifyToken, seller.getSellerProducts);
 
-// 6. Admin & Agent Shared Seller Management Endpoints
+// 6. Delete, Returns & Support Tickets (Registered before wildcard :id)
+router.get('/returns', sellerVerifyToken, require('../Controllers/orderController').getSellerReturns);
+router.get('/my-returns', sellerVerifyToken, require('../Controllers/orderController').getSellerReturns);
+router.get('/getSellerTicket', seller.getSellerTicket);
+router.get('/tickets', seller.getSellerTicket);
+router.delete('/delete-seller', sellerVerifyToken, seller.deleteSeller);
+router.delete('/delete-seller/:id', sellerVerifyToken, seller.deleteSeller);
+router.delete('/admin-delete-seller/:id', AdminOrAgentVerifyToken, seller.deleteSeller);
+
+// 7. Admin & Agent Shared Seller Management Endpoints
 router.get("/getAll-seller", AdminOrAgentVerifyToken, seller.getAllSellers);
 router.get("/all", AdminOrAgentVerifyToken, seller.getAllSellers);
 router.get("/get-seller/:id", AdminOrAgentVerifyToken, seller.getSellerById);
-router.get("/:id", AdminOrAgentVerifyToken, seller.getSellerById);
 router.put("/update-status/:id", AdminOrAgentVerifyToken, seller.updateSellerStatus);
 router.put("/update-doc-status/:id", AdminOrAgentVerifyToken, seller.updateSellerStatus);
 router.post("/approve-seller/:id", AdminOrAgentVerifyToken, seller.approveSeller);
@@ -107,13 +115,6 @@ router.put("/approve-seller/:id", AdminOrAgentVerifyToken, seller.approveSeller)
 router.post("/reject-seller/:id", AdminOrAgentVerifyToken, seller.rejectSeller);
 router.put("/reject-seller/:id", AdminOrAgentVerifyToken, seller.rejectSeller);
 router.put('/admin-update-profile/:id', uploadDocs, AdminOrAgentVerifyToken, seller.updateSeller);
-
-// 7. Delete, Returns & Support Tickets
-router.get('/returns', sellerVerifyToken, require('../Controllers/orderController').getSellerReturns);
-router.get('/my-returns', sellerVerifyToken, require('../Controllers/orderController').getSellerReturns);
-router.delete('/delete-seller', sellerVerifyToken, seller.deleteSeller);
-router.delete('/delete-seller/:id', sellerVerifyToken, seller.deleteSeller);
-router.delete('/admin-delete-seller/:id', AdminOrAgentVerifyToken, seller.deleteSeller);
-router.get('/getSellerTicket', seller.getSellerTicket);
+router.get("/:id", AdminOrAgentVerifyToken, seller.getSellerById);
 
 module.exports = router;

@@ -60,23 +60,43 @@ exports.sendNotification = async (req, res) => {
   }
 
   try {
+    // 1. Fetch persistent device tokens from DB
+    const [userTokens] = await db.query(
+      `SELECT DISTINCT deviceToken FROM users WHERE deviceToken IS NOT NULL AND deviceToken != ''`
+    );
+    const dbTokenList = userTokens.map((r) => r.deviceToken).filter(Boolean);
+
+    // 2. Merge with memory tokens (remove duplicates)
+    const allTokens = Array.from(new Set([...deviceTokens, ...dbTokenList]));
+
+    if (allTokens.length === 0) {
+      return res.status(200).json({
+        message: 'No registered device tokens found.',
+        sent: 0,
+      });
+    }
+
     const responses = [];
 
-    for (const token of deviceTokens) {
-      const message = {
-        notification: {
-          title,
-          body,
-        },
-        token: token,
-      };
+    for (const token of allTokens) {
+      try {
+        const message = {
+          notification: {
+            title,
+            body,
+          },
+          token: token,
+        };
 
-      const response = await admin.messaging().send(message);
-      responses.push(response);
+        const response = await admin.messaging().send(message);
+        responses.push(response);
+      } catch (sendErr) {
+        console.warn(`FCM send failed for token: ${token.slice(0, 10)}... Error: ${sendErr.message}`);
+      }
     }
 
     return res.status(200).json({
-      message: 'Notifications sent successfully',
+      message: `Notifications sent successfully to ${responses.length} device(s)`,
       sent: responses.length,
     });
   } catch (error) {
@@ -96,25 +116,35 @@ exports.sendAutoNotification = async (title, body) => {
   }
 
   try {
+    const [userTokens] = await db.query(
+      `SELECT DISTINCT deviceToken FROM users WHERE deviceToken IS NOT NULL AND deviceToken != ''`
+    );
+    const dbTokenList = userTokens.map((r) => r.deviceToken).filter(Boolean);
+    const allTokens = Array.from(new Set([...deviceTokens, ...dbTokenList]));
+
     const responses = [];
 
-    for (const token of deviceTokens) {
-      const message = {
-        notification: {
-          title,
-          body,
-        },
-        token: token,
-      };
-      const response = await admin.messaging().send(message);
-      responses.push(response);
+    for (const token of allTokens) {
+      try {
+        const message = {
+          notification: {
+            title,
+            body,
+          },
+          token: token,
+        };
+        const response = await admin.messaging().send(message);
+        responses.push(response);
+      } catch (err) {
+        console.warn("Auto notification token error:", err.message);
+      }
     }
     return {
       message: 'Notifications sent successfully',
       sent: responses.length,
     };
   } catch (error) {
-    console.error('Error sending notification:', error);
+    console.error('Error sending auto notification:', error);
     throw new Error('Failed to send notification');
   }
 };

@@ -4,10 +4,12 @@ dotenv.config();
 
 const jwt_secret_key = process.env.JWT_SECRET_KEY || "prabhuPooja001";
 
-exports.sellerGenerateToken = (userId) => {
+exports.sellerGenerateToken = (userOrId) => {
+  const sellerId = typeof userOrId === "object" && userOrId !== null ? (userOrId.id || userOrId.userId || userOrId.sellerId) : userOrId;
+  const cleanId = Number(sellerId) || sellerId;
   const payload = {
-    userId,
-    id: userId,
+    userId: cleanId,
+    id: cleanId,
     role: "seller"
   };
   return jwt.sign(payload, jwt_secret_key, { expiresIn: "15d" });
@@ -32,8 +34,13 @@ exports.sellerVerifyToken = (req, res, next) => {
       return res.status(401).json({ success: false, message: "Failed to Authenticate", error: err.message });
     }
 
-    const sellerId = decoded.userId || decoded.id;
-    req.user = { id: sellerId, userId: sellerId, role: decoded.role || "seller" };
+    let rawId = decoded.userId || decoded.id;
+    if (typeof rawId === "object" && rawId !== null) {
+      rawId = rawId.id || rawId.userId;
+    }
+    const cleanId = Number(rawId) || rawId;
+
+    req.user = { id: cleanId, userId: cleanId, role: decoded.role || "seller" };
     next();
   });
 };
