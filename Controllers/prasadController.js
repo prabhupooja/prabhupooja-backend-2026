@@ -450,7 +450,30 @@ exports.booking = async (req, res) => {
     return res.status(201).send({
       success: true,
       message: "Prasad booked successfully",
-      bookingId: result.insertId
+      bookingId: result.insertId,
+      data: {
+        id: result.insertId,
+        bookingId: result.insertId,
+        prasadid: prasadid,
+        quantity: qty,
+        sankalpa_name: sankalpaName || null,
+        sankalpa_gotra: sankalpaGotra || 'Kashyap',
+        weight: pWeight,
+        prasadweight: pWeight,
+        subtotal: subtotalVal,
+        delivery_charge: delivVal,
+        totalAmount: amount,
+        amount: amount,
+        paymentMethod: payMethod,
+        paymentid: payId,
+        status: bookingStatus,
+        mobile: mobile || null,
+        shipping_address: finalAddress,
+        city: city || null,
+        state: state || null,
+        pincode: pincode || null,
+        booking_date: new Date()
+      }
     });
   } catch (error) {
     console.error("Error creating prasad booking:", error);
@@ -600,24 +623,35 @@ exports.getAllBookingDetails = async (req, res) => {
     const query = `
       SELECT 
         pb.id,
+        pb.id AS booking_id,
+        pb.userid,
         u.name AS user_name,
         u.mobile AS user_number,
         u.email AS user_email,
+        p.id AS prasad_id,
         p.prasad_name AS prasad_name,
+        p.temple_name AS temple_name,
         p.image AS prasad_image,
         pb.amount,
+        pb.subtotal,
+        pb.delivery_charge,
         pb.sankalpa_name,
         pb.sankalpa_gotra,
         pb.quantity,
         pb.prasadweight,
         pb.weight,
         pb.booking_date,
-        pb.status,
+        COALESCE(pb.status, 'Pending') AS status,
         pb.paymentMethod,
         pb.paymentid,
+        pb.mobile AS booking_mobile,
+        pb.shipping_address,
+        pb.city,
+        pb.state,
+        pb.pincode,
         pb.tracking_carrier,
         pb.tracking_number,
-        uda.address AS shipping_address
+        COALESCE(pb.shipping_address, uda.address, 'N/A') AS address
       FROM prasad_booking pb
       LEFT JOIN users u ON u.id = pb.userid
       LEFT JOIN prasad p ON p.id = pb.prasadid
@@ -700,14 +734,22 @@ exports.getBookingByUserId = async (req, res) => {
         users.name AS user_name,
         users.mobile AS user_number,
         users.email AS user_email,
+        prasad.id AS prasad_id,
         prasad.prasad_name AS prasad_name,
+        prasad.temple_name AS temple_name,
         prasad.image AS prasadImage,
         prasad_booking.amount,
+        prasad_booking.subtotal,
+        prasad_booking.delivery_charge,
         prasad_booking.sankalpa_name,
         prasad_booking.sankalpa_gotra,
         prasad_booking.quantity,
         prasad_booking.prasadweight,
         prasad_booking.weight,
+        prasad_booking.shipping_address,
+        prasad_booking.city,
+        prasad_booking.state,
+        prasad_booking.pincode,
         prasad_booking.booking_date,
         COALESCE(prasad_booking.status, 'confirmed') AS status,
         prasad_booking.tracking_carrier,
