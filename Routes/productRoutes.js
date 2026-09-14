@@ -40,17 +40,17 @@ const clearProductCache = async (req, res, next) => {
   next();
 };
 
-router.post("/create", upload.array("image", 5), AdminverifyToken, clearProductCache, product.create);
-router.post('/createByMerchant', upload.array("image", 5), sellerVerifyToken, clearProductCache, product.create);
+router.post("/create", upload.array("image", 15), AdminverifyToken, clearProductCache, product.create);
+router.post('/createByMerchant', upload.array("image", 15), sellerVerifyToken, clearProductCache, product.create);
 router.get("/get", cacheMiddleware(600, "products"), product.getAll);
 router.get('/getAll', cacheMiddleware(600, "products"), product.getAllProducts);
 router.get("/get/:id", cacheMiddleware(600, "products"), product.getById);
 router.get("/getProduct/:id", AdminverifyToken, product.getByIdProduct);
 router.get('/getByMerchantId/:merchantId', sellerVerifyToken, product.getByMerchantId);
 router.get('/admin-getByMerchantId/:merchantId', AdminverifyToken, product.getByMerchantId);
-router.put("/update/:id", upload.array("image", 5), clearProductCache, product.update);
-router.put('/updateByMerchant/:id', upload.array("image", 5), sellerVerifyToken, clearProductCache, product.updateByMerchant);
-router.put('/updateByMerchant/:id/:merchantId', upload.array("image", 5), sellerVerifyToken, clearProductCache, product.updateByMerchant);
+router.put("/update/:id", upload.array("image", 15), clearProductCache, product.update);
+router.put('/updateByMerchant/:id', upload.array("image", 15), sellerVerifyToken, clearProductCache, product.updateByMerchant);
+router.put('/updateByMerchant/:id/:merchantId', upload.array("image", 15), sellerVerifyToken, clearProductCache, product.updateByMerchant);
 router.delete("/delete/:id", AdminverifyToken, clearProductCache, product.delete);
 router.delete('/deleteByMerchant/:id', sellerVerifyToken, clearProductCache, product.deleteByMerchant);
 router.delete('/deleteByMerchant/:id/:merchantId', sellerVerifyToken, clearProductCache, product.deleteByMerchant);

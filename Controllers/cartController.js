@@ -133,7 +133,9 @@ exports.getCartItemsByUserId = async (req, res) => {
                 p.productName, 
                 p.image,
                 p.merchantId, 
-                p.offerPrice 
+                p.price,
+                p.offerPrice,
+                p.delivery_charge
             FROM cart c
             INNER JOIN products p ON c.productId = p.id
             WHERE c.user_id = ?`,
@@ -145,15 +147,89 @@ exports.getCartItemsByUserId = async (req, res) => {
                 success: true,
                 message: "No cart items found for this user",
                 data: [],
+                summary: {
+                    subtotal: 0,
+                    deliveryCharge: 0,
+                    grandTotal: 0,
+                    isFreeDelivery: false,
+                }
             });
         }
 
+        // Fetch universal delivery charge settings
+        let universalDeliveryCharge = 40.00;
+        let freeDeliveryAbove = 999.00;
+        let deliveryChargeActive = true;
+
+        try {
+            const [setRows] = await db.query(
+                `SELECT setting_key, setting_value FROM app_settings 
+                 WHERE setting_key IN ('universal_delivery_charge', 'free_delivery_above', 'delivery_charge_active')`
+            );
+            (setRows || []).forEach(r => {
+                if (r.setting_key === 'universal_delivery_charge') universalDeliveryCharge = parseFloat(r.setting_value) || 0.00;
+                if (r.setting_key === 'free_delivery_above') freeDeliveryAbove = parseFloat(r.setting_value) || 0.00;
+                if (r.setting_key === 'delivery_charge_active') deliveryChargeActive = (r.setting_value === '1' || r.setting_value === 'true');
+            });
+        } catch (sErr) {
+            console.warn("Could not load app_settings in cart calculation, using default 40:", sErr.message);
+        }
+
+        let subtotal = 0;
+        let maxItemDeliveryCharge = 0;
+
+        const formattedData = data.map((item) => {
+            const itemPrice = parseFloat(item.offerPrice || item.price || 0);
+            const qty = parseInt(item.quantity || 1, 10);
+            subtotal += itemPrice * qty;
+
+            let effectiveItemDelivery = 0;
+            if (deliveryChargeActive) {
+                if (item.delivery_charge !== null && item.delivery_charge !== undefined) {
+                    effectiveItemDelivery = parseFloat(item.delivery_charge) || 0;
+                } else {
+                    effectiveItemDelivery = universalDeliveryCharge;
+                }
+            }
+
+            if (effectiveItemDelivery > maxItemDeliveryCharge) {
+                maxItemDeliveryCharge = effectiveItemDelivery;
+            }
+
+            return {
+                ...item,
+                effective_delivery_charge: effectiveItemDelivery,
+            };
+        });
+
+        let finalDeliveryCharge = maxItemDeliveryCharge;
+        let isFreeDelivery = false;
+
+        if (freeDeliveryAbove > 0 && subtotal >= freeDeliveryAbove) {
+            finalDeliveryCharge = 0;
+            isFreeDelivery = true;
+        }
+
+        if (!deliveryChargeActive) {
+            finalDeliveryCharge = 0;
+        }
+
+        const grandTotal = +(subtotal + finalDeliveryCharge).toFixed(2);
+
         return res.status(200).send({
             success: true,
-            data: data,
+            data: formattedData,
+            summary: {
+                subtotal: +subtotal.toFixed(2),
+                deliveryCharge: +finalDeliveryCharge.toFixed(2),
+                universalDeliveryCharge: +universalDeliveryCharge.toFixed(2),
+                freeDeliveryAbove: +freeDeliveryAbove.toFixed(2),
+                isFreeDelivery: isFreeDelivery,
+                grandTotal: grandTotal,
+            },
         });
     } catch (error) {
-        console.error("Database Error:", error);
+        console.error("Database Error in getCartItemsByUserId:", error);
         return res.status(500).send({
             success: false,
             message: "Internal Server Error",

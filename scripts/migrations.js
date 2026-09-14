@@ -463,6 +463,115 @@ async function runMigrations() {
       console.warn("Note on products verified update:", prodVerErr.message);
     }
 
+    // 8. Create app_settings table for Universal Delivery Charge & System Configurations
+    try {
+      const createAppSettingsTable = `
+        CREATE TABLE IF NOT EXISTS app_settings (
+          setting_key VARCHAR(100) PRIMARY KEY,
+          setting_value TEXT NOT NULL,
+          description VARCHAR(255) DEFAULT NULL,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+      await db.query(createAppSettingsTable);
+      console.log("✅ Table 'app_settings' checked/created successfully.");
+
+      // Seed default settings if not already present
+      const defaultSettings = [
+        { key: 'universal_delivery_charge', val: '40.00', desc: 'Universal fallback delivery charge in rupees' },
+        { key: 'free_delivery_above', val: '999.00', desc: 'Order amount above which delivery is free (0 to disable)' },
+        { key: 'delivery_charge_active', val: '1', desc: '1 to enable delivery charges, 0 to disable' }
+      ];
+
+      for (const s of defaultSettings) {
+        await db.query(
+          `INSERT INTO app_settings (setting_key, setting_value, description)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE description = VALUES(description)`,
+          [s.key, s.val, s.desc]
+        );
+      }
+      console.log("✅ Default delivery charge settings seeded in 'app_settings'.");
+    } catch (setErr) {
+      console.warn("Note on app_settings migration:", setErr.message);
+    }
+
+    // 9. Ensure products table has delivery_charge column and image column is LONGTEXT
+    try {
+      const [prodCols] = await db.query("SHOW COLUMNS FROM products");
+      const prodColNames = prodCols.map(c => c.Field.toLowerCase());
+
+      if (!prodColNames.includes('delivery_charge')) {
+        await db.query("ALTER TABLE products ADD COLUMN delivery_charge DECIMAL(10,2) DEFAULT NULL AFTER offerPrice");
+        console.log("✅ Added 'delivery_charge' column to 'products' table.");
+      }
+
+      // Ensure image column is LONGTEXT for storing up to 15 S3 image URLs safely
+      const imageCol = prodCols.find(c => c.Field.toLowerCase() === 'image');
+      if (imageCol && !imageCol.Type.toLowerCase().includes('text') && !imageCol.Type.toLowerCase().includes('json')) {
+        await db.query("ALTER TABLE products MODIFY COLUMN image LONGTEXT DEFAULT NULL");
+        console.log("✅ Upgraded 'image' column to LONGTEXT in 'products' table.");
+      }
+    } catch (prodColErr) {
+      console.warn("Note on products table column update:", prodColErr.message);
+    }
+
+    // 10. Ensure orders table has delivery_charge column
+    try {
+      const [ordCols] = await db.query("SHOW COLUMNS FROM orders");
+      const ordColNames = ordCols.map(c => c.Field.toLowerCase());
+
+      if (!ordColNames.includes('delivery_charge')) {
+        await db.query("ALTER TABLE orders ADD COLUMN delivery_charge DECIMAL(10,2) DEFAULT 0.00 AFTER totalPrice");
+        console.log("✅ Added 'delivery_charge' column to 'orders' table.");
+      }
+    } catch (ordColErr) {
+      console.warn("Note on orders table delivery_charge column:", ordColErr.message);
+    }
+
+    // 11. Ensure prasad table has dynamic fields (temple_name, description, weight_options, delivery_charge, inclusions, etc.)
+    try {
+      const [prasadCols] = await db.query("SHOW COLUMNS FROM prasad");
+      const prasadColNames = prasadCols.map(c => c.Field.toLowerCase());
+
+      const prasadColsToAdd = [
+        { name: "temple_name", def: "VARCHAR(255) DEFAULT NULL" },
+        { name: "description", def: "TEXT DEFAULT NULL" },
+        { name: "weight_options", def: "TEXT DEFAULT NULL" },
+        { name: "delivery_charge", def: "DECIMAL(10,2) DEFAULT 40.00" },
+        { name: "free_delivery_above", def: "DECIMAL(10,2) DEFAULT 499.00" },
+        { name: "inclusions", def: "TEXT DEFAULT NULL" },
+        { name: "benefits", def: "TEXT DEFAULT NULL" },
+        { name: "dispatch_time", def: "VARCHAR(100) DEFAULT '24 - 48 Hours'" }
+      ];
+
+      for (const col of prasadColsToAdd) {
+        if (!prasadColNames.includes(col.name.toLowerCase())) {
+          await db.query(`ALTER TABLE prasad ADD COLUMN ${col.name} ${col.def}`);
+          console.log(`✅ Added '${col.name}' column to 'prasad' table.`);
+        }
+      }
+    } catch (prasadSchemaErr) {
+      console.warn("Note on prasad table dynamic migration:", prasadSchemaErr.message);
+    }
+
+    // 12. Ensure prasad_booking has subtotal, delivery_charge
+    try {
+      const [pbCols] = await db.query("SHOW COLUMNS FROM prasad_booking");
+      const pbColNames = pbCols.map(c => c.Field.toLowerCase());
+
+      if (!pbColNames.includes('subtotal')) {
+        await db.query("ALTER TABLE prasad_booking ADD COLUMN subtotal DECIMAL(10,2) DEFAULT 0.00 AFTER amount");
+        console.log("✅ Added 'subtotal' column to 'prasad_booking' table.");
+      }
+      if (!pbColNames.includes('delivery_charge')) {
+        await db.query("ALTER TABLE prasad_booking ADD COLUMN delivery_charge DECIMAL(10,2) DEFAULT 0.00 AFTER subtotal");
+        console.log("✅ Added 'delivery_charge' column to 'prasad_booking' table.");
+      }
+    } catch (pbSchemaErr) {
+      console.warn("Note on prasad_booking table migration:", pbSchemaErr.message);
+    }
+
     console.log("=== MIGRATIONS COMPLETE ===");
     return true;
   } catch (err) {

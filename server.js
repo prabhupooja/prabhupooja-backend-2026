@@ -129,6 +129,7 @@ app.use("/api/v1/pushNotification", require('./Routes/mobilePushNotification'));
 app.use("/api/v1/pushNotificatin", require('./Routes/mobilePushNotification'));
 app.use("/api/v1/rudraAbhishek",require('./Routes/rudraAbhishekRoutes'));
 app.use("/api/v1/events", require('./Routes/eventRoutes'));
+app.use("/api/v1/settings", require('./Routes/settingRoutes'));
 
 // Unprefixed route aliases for direct endpoints
 app.use("/users", require("./Routes/customerRoutes"));
@@ -140,6 +141,7 @@ app.use("/temple", require("./Routes/templeRoutes"));
 app.use("/yoga", require("./Routes/yogaRoutes"));
 app.use("/events", require("./Routes/eventRoutes"));
 app.use("/ecommerce-banner", require("./Routes/ecommerceBannerRoutes"));
+app.use("/settings", require("./Routes/settingRoutes"));
 
 app.use(express.static(path.join(__dirname, 'public')));
 

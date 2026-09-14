@@ -215,7 +215,7 @@ const generateInvoice = async (data) => {
       ? data.products
       : [data.products];
     let subtotal = 0;
-    const deliveryCharge = 0;
+    const deliveryCharge = parseFloat(data.deliveryCharge !== undefined ? data.deliveryCharge : (data.order?.delivery_charge !== undefined ? data.order.delivery_charge : 0)) || 0;
 
     products.forEach((product, i) => {
       const qty = data?.quantities?.[i] || 1;
@@ -386,14 +386,18 @@ exports.create = async (req, res) => {
       }
     }
 
+    const rawDelivery = req.body.delivery_charge !== undefined ? req.body.delivery_charge : req.body.deliveryCharge;
+    const orderDeliveryCharge = (rawDelivery !== undefined && rawDelivery !== null && rawDelivery !== '') ? parseFloat(rawDelivery) : 0.00;
+
     const [result] = await db.query(
-      `INSERT INTO orders (productId, userId, quantity, totalPrice, createdAt, booking, images, paymentMethod, status, merchantId, shipping_address, payment_id)
-       VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?,?,?)`,
+      `INSERT INTO orders (productId, userId, quantity, totalPrice, delivery_charge, createdAt, booking, images, paymentMethod, status, merchantId, shipping_address, payment_id)
+       VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
       [
         JSON.stringify(productIdArray),
         userId,
         JSON.stringify(quantityArray),
         totalPrice,
+        orderDeliveryCharge,
         booking,
         JSON.stringify(imagesArray),
         paymentMethod,
@@ -448,8 +452,9 @@ exports.create = async (req, res) => {
         const filePath = await generateInvoice({
           user: userRows[0] || user[0],
           products: productRows,
-          order: order,
+          order: { ...order, delivery_charge: orderDeliveryCharge },
           quantities: quantityArray,
+          deliveryCharge: orderDeliveryCharge,
           address: shippingAddress,
         });
         const transporter = nodemailer.createTransport({

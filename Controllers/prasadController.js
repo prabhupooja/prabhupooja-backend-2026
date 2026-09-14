@@ -2,9 +2,67 @@ const db = require("../config/db");
 const nodemailer = require('nodemailer');
 const { getCache, setCache, deleteCache } = require("../config/redis");
 
+const formatPrasadItem = (p) => {
+  if (!p) return null;
+  let parsedWeights = [];
+  if (p.weight_options) {
+    try {
+      parsedWeights = typeof p.weight_options === 'string' ? JSON.parse(p.weight_options) : p.weight_options;
+    } catch (e) {
+      parsedWeights = [];
+    }
+  }
+  if (!Array.isArray(parsedWeights) || parsedWeights.length === 0) {
+    parsedWeights = [
+      { weight: "250", unit: "grams", label: "250g Pack", price: Number(p.price) || 299, mrp: Math.round((Number(p.price) || 299) * 1.3) },
+      { weight: "500", unit: "grams", label: "500g Pack", price: Math.round((Number(p.price) || 299) * 1.8), mrp: Math.round((Number(p.price) || 299) * 2.3) },
+      { weight: "1", unit: "kg", label: "1 KG Family Box", price: Math.round((Number(p.price) || 299) * 3.2), mrp: Math.round((Number(p.price) || 299) * 4.2) }
+    ];
+  }
+
+  let parsedInclusions = [];
+  if (p.inclusions) {
+    try {
+      parsedInclusions = typeof p.inclusions === 'string' ? JSON.parse(p.inclusions) : p.inclusions;
+    } catch (e) {
+      parsedInclusions = [];
+    }
+  }
+
+  let parsedBenefits = [];
+  if (p.benefits) {
+    try {
+      parsedBenefits = typeof p.benefits === 'string' ? JSON.parse(p.benefits) : p.benefits;
+    } catch (e) {
+      parsedBenefits = [];
+    }
+  }
+
+  return {
+    ...p,
+    weight_options: parsedWeights,
+    inclusions: parsedInclusions,
+    benefits: parsedBenefits,
+    delivery_charge: p.delivery_charge !== undefined && p.delivery_charge !== null ? parseFloat(p.delivery_charge) : 40.00,
+    free_delivery_above: p.free_delivery_above !== undefined && p.free_delivery_above !== null ? parseFloat(p.free_delivery_above) : 499.00,
+  };
+};
+
 exports.create = async (req, res) => {
-  const { prasad_name, price, temple_id } = req.body;
-  const image = req.file?.location;
+  const { 
+    prasad_name, 
+    temple_name,
+    price, 
+    temple_id,
+    description,
+    weight_options,
+    delivery_charge,
+    free_delivery_above,
+    inclusions,
+    benefits,
+    dispatch_time
+  } = req.body;
+  const image = req.file?.location || req.body?.image;
   if (!image) {
     return res.status(400).send({
       success: false,
@@ -13,7 +71,30 @@ exports.create = async (req, res) => {
   }
 
   try {
-    const data = await db.query(`INSERT INTO prasad (prasad_name,price,temple_id, image) VALUES (?,?, ?,?)`, [prasad_name, price, temple_id, image]);
+    const weightsJson = weight_options ? (typeof weight_options === 'object' ? JSON.stringify(weight_options) : weight_options) : null;
+    const inclusionsJson = inclusions ? (typeof inclusions === 'object' ? JSON.stringify(inclusions) : inclusions) : null;
+    const benefitsJson = benefits ? (typeof benefits === 'object' ? JSON.stringify(benefits) : benefits) : null;
+
+    const data = await db.query(
+      `INSERT INTO prasad (
+        prasad_name, temple_name, price, temple_id, image, description, 
+        weight_options, delivery_charge, free_delivery_above, inclusions, benefits, dispatch_time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+      [
+        prasad_name, 
+        temple_name || null,
+        price, 
+        temple_id || null, 
+        image, 
+        description || null,
+        weightsJson,
+        delivery_charge !== undefined ? parseFloat(delivery_charge) : 40.00,
+        free_delivery_above !== undefined ? parseFloat(free_delivery_above) : 499.00,
+        inclusionsJson,
+        benefitsJson,
+        dispatch_time || '24 - 48 Hours'
+      ]
+    );
 
     if (!data) {
       return res.status(404).send({
@@ -27,10 +108,11 @@ exports.create = async (req, res) => {
 
     return res.status(201).send({
       success: true,
-      message: "prasad created successfully"
+      message: "Prasad created successfully",
+      id: data[0]?.insertId
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error creating prasad:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
@@ -53,19 +135,22 @@ exports.get = async (req, res) => {
     const [temples] = await db.query("SELECT * FROM prasad");
 
     if (!temples || temples.length === 0) {
-      return res.status(404).send({
-        success: false,
+      return res.status(200).send({
+        success: true,
         message: "No prashad found",
+        data: []
       });
     }
 
+    const formatted = temples.map(formatPrasadItem);
+
     // Cache for 10 minutes (600s)
-    await setCache(cacheKey, temples, 600);
+    await setCache(cacheKey, formatted, 600);
     res.setHeader("X-Cache", "MISS");
 
     return res.status(200).send({
       success: true,
-      data: temples,
+      data: formatted,
     });
   } catch (error) {
     console.error("Error fetching prashad:", error);
@@ -99,12 +184,14 @@ exports.getById = async (req, res) => {
       });
     }
 
-    await setCache(cacheKey, data[0], 600);
+    const item = formatPrasadItem(data[0]);
+
+    await setCache(cacheKey, item, 600);
     res.setHeader("X-Cache", "MISS");
 
     return res.status(200).send({
       success: true,
-      data: data[0],
+      data: item,
     });
   } catch (error) {
     console.error(error);
@@ -117,8 +204,20 @@ exports.getById = async (req, res) => {
 
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const { prasad_name, price, temple_id } = req.body;
-  const image = req.file ? req.file.location : null;
+  const { 
+    prasad_name, 
+    temple_name,
+    price, 
+    temple_id,
+    description,
+    weight_options,
+    delivery_charge,
+    free_delivery_above,
+    inclusions,
+    benefits,
+    dispatch_time
+  } = req.body;
+  const image = req.file ? req.file.location : req.body.image;
 
   try {
     const [existingService] = await db.query(`SELECT * FROM prasad WHERE id = ?`, [id]);
@@ -134,21 +233,50 @@ exports.update = async (req, res) => {
     const updateFields = [];
     const updateValues = [];
 
-    if (prasad_name) {
+    if (prasad_name !== undefined) {
       updateFields.push("prasad_name = ?");
       updateValues.push(prasad_name);
     }
-
-    if (price) {
+    if (temple_name !== undefined) {
+      updateFields.push("temple_name = ?");
+      updateValues.push(temple_name);
+    }
+    if (price !== undefined) {
       updateFields.push("price = ?");
       updateValues.push(price);
     }
-
-    if (temple_id) {
+    if (temple_id !== undefined) {
       updateFields.push("temple_id = ?");
       updateValues.push(temple_id);
     }
-
+    if (description !== undefined) {
+      updateFields.push("description = ?");
+      updateValues.push(description);
+    }
+    if (weight_options !== undefined) {
+      updateFields.push("weight_options = ?");
+      updateValues.push(typeof weight_options === 'object' ? JSON.stringify(weight_options) : weight_options);
+    }
+    if (delivery_charge !== undefined) {
+      updateFields.push("delivery_charge = ?");
+      updateValues.push(delivery_charge !== null && delivery_charge !== '' ? parseFloat(delivery_charge) : 40.00);
+    }
+    if (free_delivery_above !== undefined) {
+      updateFields.push("free_delivery_above = ?");
+      updateValues.push(free_delivery_above !== null && free_delivery_above !== '' ? parseFloat(free_delivery_above) : 499.00);
+    }
+    if (inclusions !== undefined) {
+      updateFields.push("inclusions = ?");
+      updateValues.push(typeof inclusions === 'object' ? JSON.stringify(inclusions) : inclusions);
+    }
+    if (benefits !== undefined) {
+      updateFields.push("benefits = ?");
+      updateValues.push(typeof benefits === 'object' ? JSON.stringify(benefits) : benefits);
+    }
+    if (dispatch_time !== undefined) {
+      updateFields.push("dispatch_time = ?");
+      updateValues.push(dispatch_time);
+    }
     if (image) {
       updateFields.push("image = ?");
       updateValues.push(image);
@@ -237,8 +365,9 @@ exports.delete = async (req, res) => {
 exports.booking = async (req, res) => {
   const { 
     prasadid, paymentid, sankalpaName, sankalpaGotra, quantity, 
-    paymentMethod, userid, amount, prasadweight, weight, status,
-    mobile, shipping_address, city, state, pincode
+    paymentMethod, userid, amount, subtotal, deliveryCharge, delivery_charge,
+    prasadweight, weight, status,
+    mobile, shipping_address, address, city, state, pincode
   } = req.body;
 
   // Check for essential fields
@@ -255,14 +384,17 @@ exports.booking = async (req, res) => {
     const payMethod = paymentMethod || 'Online';
     const payId = paymentid || `PRASAD_PAY_${Date.now()}`;
     const pWeight = prasadweight || weight || 'Standard';
+    const subtotalVal = subtotal !== undefined ? parseFloat(subtotal) : parseFloat(amount);
+    const delivVal = deliveryCharge !== undefined ? parseFloat(deliveryCharge) : (delivery_charge !== undefined ? parseFloat(delivery_charge) : (subtotalVal >= 499 ? 0.00 : 40.00));
+    const finalAddress = shipping_address || (typeof address === 'object' ? JSON.stringify(address) : address) || null;
 
     // Insert booking into the database
     const [result] = await db.query(`
       INSERT INTO prasad_booking (
         prasadid, paymentid, sankalpa_name, sankalpa_gotra, quantity, 
-        paymentMethod, userid, amount, booking_date, prasadweight, 
+        paymentMethod, userid, amount, subtotal, delivery_charge, booking_date, prasadweight, 
         weight, status, mobile, shipping_address, city, state, pincode
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       prasadid,
       payId,
@@ -272,11 +404,13 @@ exports.booking = async (req, res) => {
       payMethod,
       userid,
       amount,
+      subtotalVal,
+      delivVal,
       pWeight,
       pWeight,
       bookingStatus,
       mobile || null,
-      shipping_address || null,
+      finalAddress,
       city || null,
       state || null,
       pincode || null

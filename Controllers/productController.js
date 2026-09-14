@@ -23,11 +23,16 @@ exports.create = async (req, res) => {
     ProductHighlights,
     Benefits,
     UsageAndCareInstructions,
+    delivery_charge,
+    deliveryCharge,
     verified,
   } = req.body;
 
   merchantId = merchantId || (req.user && req.user.id) || 1;
   const isVerified = (verified !== undefined && verified !== null) ? Number(verified) : 1;
+
+  const rawDelivery = delivery_charge !== undefined ? delivery_charge : deliveryCharge;
+  const parsedDeliveryCharge = (rawDelivery !== undefined && rawDelivery !== null && rawDelivery !== '') ? parseFloat(rawDelivery) : null;
 
   const images = req.files ? req.files.map((file) => file.location) : (req.file ? [req.file.location] : []);
 
@@ -70,13 +75,14 @@ exports.create = async (req, res) => {
         }
       }
 
-      // Add new images to existing ones
-      const updatedImages = images.length > 0 ? [...existingImages, ...images] : existingImages;
+      // Add new images to existing ones (Support up to 15 photos)
+      const updatedImages = (images.length > 0 ? [...existingImages, ...images] : existingImages).slice(0, 15);
 
       await db.query(
         `UPDATE products SET 
           productName = ?, theme = ?, brand = ?, colour = ?, style = ?, material = ?, 
           specialFeature = ?, noOfItems = ?, price = ?, image = ?, offerPrice = ?, 
+          delivery_charge = ?,
           description = ?, merchantId = ?, Height = ?, Dimension = ?, Weight = ?, 
           ProductCode = ?, ProductHighlights = ?, Benefits = ?, UsageAndCareInstructions = ?,
           verified = COALESCE(?, verified, 1)
@@ -93,6 +99,7 @@ exports.create = async (req, res) => {
           price,
           JSON.stringify(updatedImages),
           offerPrice,
+          parsedDeliveryCharge,
           description,
           merchantId,
           Height,
@@ -115,13 +122,14 @@ exports.create = async (req, res) => {
     }
 
     // Else, create a new product (Default verified = 1 so it appears live on website immediately)
+    const finalImages = images.slice(0, 15);
     const create = await db.query(
       `INSERT INTO products (
         productName, theme, brand, colour, style, material, specialFeature, 
-        noOfItems, price, image, offerPrice, description, merchantId,
+        noOfItems, price, image, offerPrice, delivery_charge, description, merchantId,
         Height, Dimension, Weight, ProductCode, ProductHighlights, Benefits, UsageAndCareInstructions,
         verified, isDeleted, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
       [
         productName,
         theme,
@@ -132,8 +140,9 @@ exports.create = async (req, res) => {
         specialFeature,
         noOfItems,
         price,
-        JSON.stringify(images),
+        JSON.stringify(finalImages),
         offerPrice,
+        parsedDeliveryCharge,
         description,
         merchantId,
         Height,
@@ -155,7 +164,7 @@ exports.create = async (req, res) => {
       data: {
         id: create[0]?.insertId,
         insertId: create[0]?.insertId,
-        images: images,
+        images: finalImages,
       },
     });
   } catch (error) {
@@ -343,6 +352,8 @@ exports.update = async (req, res) => {
     newImages,
     existingImages,
     existing_images,
+    delivery_charge,
+    deliveryCharge,
     verified,
   } = req.body;
   const uploadedImages = req.files
@@ -423,6 +434,11 @@ exports.update = async (req, res) => {
       updateFields.push("offerPrice = ?");
       values.push(offerPrice);
     }
+    const updateDeliv = delivery_charge !== undefined ? delivery_charge : deliveryCharge;
+    if (updateDeliv !== undefined) {
+      updateFields.push("delivery_charge = ?");
+      values.push(updateDeliv === null || updateDeliv === '' ? null : parseFloat(updateDeliv));
+    }
     if (description !== undefined) {
       updateFields.push("description = ?");
       values.push(description);
@@ -482,7 +498,7 @@ exports.update = async (req, res) => {
         retainedImages = currentImages;
       }
 
-      const finalImages = [...retainedImages, ...uploadedImages].slice(0, 5);
+      const finalImages = [...retainedImages, ...uploadedImages].slice(0, 15);
       updateFields.push("image = ?");
       values.push(JSON.stringify(finalImages));
     } else if (newImages) {
@@ -786,6 +802,8 @@ exports.updateByMerchant = async (req, res) => {
     newImages,
     existingImages,
     existing_images,
+    delivery_charge,
+    deliveryCharge,
   } = req.body;
 
   const uploadedImages = req.files
@@ -869,6 +887,11 @@ exports.updateByMerchant = async (req, res) => {
       updateFields.push("offerPrice = ?");
       values.push(offerPrice);
     }
+    const merchDeliv = delivery_charge !== undefined ? delivery_charge : deliveryCharge;
+    if (merchDeliv !== undefined) {
+      updateFields.push("delivery_charge = ?");
+      values.push(merchDeliv === null || merchDeliv === '' ? null : parseFloat(merchDeliv));
+    }
     if (description !== undefined) {
       updateFields.push("description = ?");
       values.push(description);
@@ -924,7 +947,7 @@ exports.updateByMerchant = async (req, res) => {
         retainedImages = currentImages;
       }
 
-      const finalImages = [...retainedImages, ...uploadedImages].slice(0, 5);
+      const finalImages = [...retainedImages, ...uploadedImages].slice(0, 15);
       updateFields.push("image = ?");
       values.push(JSON.stringify(finalImages));
     } else if (newImages) {
