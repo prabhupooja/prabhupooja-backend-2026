@@ -744,7 +744,17 @@ exports.getSellerProducts = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const [products] = await db.query(
-      `SELECT * FROM products WHERE merchantId = ? AND (isDeleted = 0 OR isDeleted IS NULL) ORDER BY id DESC LIMIT ? OFFSET ?`,
+      `SELECT p.*,
+              IFNULL(r.total_reviews, 0) AS total_reviews,
+              IFNULL(r.average_rating, 5.0) AS average_rating
+       FROM products p
+       LEFT JOIN (
+         SELECT productId, COUNT(*) AS total_reviews, AVG(rating) AS average_rating
+         FROM product_review
+         GROUP BY productId
+       ) r ON p.id = r.productId
+       WHERE p.merchantId = ? AND (p.isDeleted = 0 OR p.isDeleted IS NULL) 
+       ORDER BY p.id DESC LIMIT ? OFFSET ?`,
       [sellerId, limit, offset]
     );
 
@@ -753,11 +763,53 @@ exports.getSellerProducts = async (req, res) => {
       [sellerId]
     );
 
+    const formattedProducts = (products || []).map((p) => {
+      let parsedImages = [];
+      try {
+        if (Array.isArray(p.image)) {
+          parsedImages = p.image;
+        } else if (typeof p.image === "string") {
+          const trimmed = p.image.trim();
+          if (trimmed.startsWith("[")) {
+            parsedImages = JSON.parse(trimmed);
+          } else if (trimmed.includes(",")) {
+            parsedImages = trimmed.split(",").map((s) => s.trim()).filter(Boolean);
+          } else if (trimmed) {
+            parsedImages = [trimmed];
+          }
+        }
+      } catch (e) {
+        parsedImages = p.image ? [p.image] : [];
+      }
+
+      const mrp = parseFloat(p.price || 0);
+      const offer = parseFloat(p.offerPrice !== null && p.offerPrice !== undefined ? p.offerPrice : p.price || 0);
+      const autoDiscount = mrp > 0 && offer < mrp ? Math.round(((mrp - offer) / mrp) * 100) : 0;
+      const stockQty = p.stock !== null && p.stock !== undefined ? Number(p.stock) : (p.noOfItems !== null && p.noOfItems !== undefined ? Number(p.noOfItems) : 0);
+
+      return {
+        ...p,
+        image: parsedImages,
+        images: parsedImages,
+        coverImage: parsedImages[0] || null,
+        price: mrp,
+        offerPrice: offer,
+        discountPercentage: p.discount_percent !== null && p.discount_percent !== undefined ? parseFloat(p.discount_percent) : autoDiscount,
+        stock: stockQty,
+        stock_status: p.stock_status || (stockQty > 0 ? "In Stock" : "Out of Stock"),
+        category: p.category || p.theme || "Puja Essentials",
+        productType: p.productType || "Puja Samagri",
+        rating: parseFloat(p.average_rating || 5.0),
+        totalReviews: parseInt(p.total_reviews || 0, 10),
+      };
+    });
+
     return res.status(200).json({
       success: true,
       count: countResult[0]?.total || 0,
       totalPages: Math.ceil((countResult[0]?.total || 0) / limit),
-      data: products
+      data: formattedProducts,
+      products: formattedProducts,
     });
   } catch (error) {
     console.error("Error fetching seller products:", error);

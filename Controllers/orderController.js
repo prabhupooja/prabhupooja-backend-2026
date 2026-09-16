@@ -410,13 +410,41 @@ exports.create = async (req, res) => {
 
     let productRows = [];
 
-    for (const pId of productIdArray) {
+    for (let i = 0; i < productIdArray.length; i++) {
+      const pId = productIdArray[i];
+      const qty = Number(quantityArray[i]) || 1;
+
       const [rows] = await db.query("SELECT * FROM products WHERE id = ?", [
         pId,
       ]);
 
       if (rows.length > 0) {
         productRows.push(rows[0]);
+      }
+
+      // 1. Auto-deduct stock & noOfItems
+      try {
+        await db.query(
+          `UPDATE products 
+           SET stock = GREATEST(0, COALESCE(stock, 10) - ?),
+               noOfItems = GREATEST(0, COALESCE(noOfItems, 10) - ?)
+           WHERE id = ?`,
+          [qty, qty, pId]
+        );
+
+        // 2. Auto update stock_status if Out of Stock or Low Stock
+        await db.query(
+          `UPDATE products 
+           SET stock_status = CASE 
+             WHEN stock <= 0 THEN 'Out of Stock' 
+             WHEN stock <= COALESCE(low_stock_threshold, 5) THEN 'Low Stock' 
+             ELSE 'In Stock' 
+           END 
+           WHERE id = ?`,
+          [pId]
+        );
+      } catch (stockErr) {
+        console.error(`[OrderController] Error updating stock for product ${pId}:`, stockErr.message);
       }
     }
 

@@ -497,13 +497,79 @@ async function runMigrations() {
     }
 
     // 9. Ensure products table has delivery_charge column and image column is LONGTEXT
+    // 9. Ensure products table has complete standard e-commerce fields
     try {
       const [prodCols] = await db.query("SHOW COLUMNS FROM products");
       const prodColNames = prodCols.map(c => c.Field.toLowerCase());
 
-      if (!prodColNames.includes('delivery_charge')) {
-        await db.query("ALTER TABLE products ADD COLUMN delivery_charge DECIMAL(10,2) DEFAULT NULL AFTER offerPrice");
-        console.log("✅ Added 'delivery_charge' column to 'products' table.");
+      const standardProductCols = [
+        { name: "delivery_charge", def: "DECIMAL(10,2) DEFAULT NULL" },
+        { name: "productType", def: "VARCHAR(100) DEFAULT 'Puja Samagri'" },
+        { name: "category", def: "VARCHAR(255) DEFAULT NULL" },
+        { name: "subcategory", def: "VARCHAR(255) DEFAULT NULL" },
+        { name: "stock", def: "INT DEFAULT 0" },
+        { name: "stock_status", def: "VARCHAR(50) DEFAULT 'In Stock'" },
+        { name: "low_stock_threshold", def: "INT DEFAULT 5" },
+        { name: "discount_percent", def: "DECIMAL(5,2) DEFAULT 0.00" },
+        { name: "tax_type", def: "VARCHAR(50) DEFAULT 'Tax Inclusive'" },
+        { name: "gst_percentage", def: "DECIMAL(5,2) DEFAULT 0.00" },
+        { name: "size_fit", def: "VARCHAR(100) DEFAULT NULL" },
+        { name: "length", def: "VARCHAR(100) DEFAULT NULL" },
+        { name: "width", def: "VARCHAR(100) DEFAULT NULL" },
+        { name: "depth", def: "VARCHAR(100) DEFAULT NULL" },
+        { name: "specification_unit", def: "VARCHAR(50) DEFAULT 'cm'" },
+        { name: "short_description", def: "TEXT DEFAULT NULL" },
+        { name: "package_includes", def: "TEXT DEFAULT NULL" },
+        { name: "disclaimer", def: "TEXT DEFAULT NULL" },
+        { name: "shipping_class", def: "VARCHAR(100) DEFAULT 'Standard'" },
+        { name: "return_available", def: "TINYINT(1) DEFAULT 1" },
+        { name: "replacement_available", def: "TINYINT(1) DEFAULT 1" },
+        { name: "replacement_period", def: "INT DEFAULT 7" },
+        { name: "seo_title", def: "VARCHAR(255) DEFAULT NULL" },
+        { name: "seo_description", def: "TEXT DEFAULT NULL" },
+        { name: "url_slug", def: "VARCHAR(255) DEFAULT NULL" },
+        { name: "search_keywords", def: "TEXT DEFAULT NULL" },
+        { name: "is_featured", def: "TINYINT(1) DEFAULT 0" },
+        { name: "is_bestseller", def: "TINYINT(1) DEFAULT 0" },
+        { name: "publish_date", def: "DATETIME DEFAULT NULL" },
+        { name: "unpublish_date", def: "DATETIME DEFAULT NULL" },
+        { name: "occasion", def: "VARCHAR(150) DEFAULT NULL" },
+        { name: "suitable_for", def: "VARCHAR(150) DEFAULT NULL" },
+        { name: "country_of_origin", def: "VARCHAR(100) DEFAULT 'India'" },
+        { name: "estimated_delivery_days", def: "VARCHAR(100) DEFAULT '3 - 5 Business Days'" },
+        { name: "dispatch_time", def: "VARCHAR(100) DEFAULT 'Dispatched within 24 Hours'" },
+        { name: "tags", def: "TEXT DEFAULT NULL" },
+        { name: "average_rating", def: "DECIMAL(3,2) DEFAULT 5.00" },
+        { name: "total_reviews", def: "INT DEFAULT 0" }
+      ];
+
+      for (const col of standardProductCols) {
+        if (!prodColNames.includes(col.name.toLowerCase())) {
+          try {
+            await db.query(`ALTER TABLE products ADD COLUMN ${col.name} ${col.def}`);
+            console.log(`✅ Added '${col.name}' column to 'products' table.`);
+          } catch (colErr) {
+            console.warn(`Note on adding ${col.name} to products:`, colErr.message);
+          }
+        }
+      }
+
+      // Ensure delivery_settings table exists
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS delivery_settings (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          universal_delivery_charge DECIMAL(10,2) DEFAULT 40.00,
+          free_delivery_above DECIMAL(10,2) DEFAULT 999.00,
+          delivery_charge_active TINYINT(1) DEFAULT 1,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      // Seed default delivery_settings if empty
+      const [dsRows] = await db.query("SELECT id FROM delivery_settings WHERE id = 1");
+      if (!dsRows || dsRows.length === 0) {
+        await db.query("INSERT INTO delivery_settings (id, universal_delivery_charge, free_delivery_above, delivery_charge_active) VALUES (1, 40.00, 999.00, 1)");
+        console.log("✅ Seeded default delivery_settings (₹40 charge, Free above ₹999).");
       }
 
       // Ensure image column is LONGTEXT for storing up to 15 S3 image URLs safely
@@ -513,7 +579,7 @@ async function runMigrations() {
         console.log("✅ Upgraded 'image' column to LONGTEXT in 'products' table.");
       }
     } catch (prodColErr) {
-      console.warn("Note on products table column update:", prodColErr.message);
+      console.warn("Note on products table standard migration:", prodColErr.message);
     }
 
     // 10. Ensure orders table has delivery_charge column
