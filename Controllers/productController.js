@@ -64,32 +64,44 @@ const formatProductResponse = (p) => {
   const offer = parseFloat(p.offerPrice !== null && p.offerPrice !== undefined ? p.offerPrice : p.price || 0);
   const autoDiscount = mrp > 0 && offer < mrp ? Math.round(((mrp - offer) / mrp) * 100) : 0;
   const discountPercent = p.discount_percent !== null && p.discount_percent !== undefined ? parseFloat(p.discount_percent) : autoDiscount;
+  
   const rawStock = p.stock !== null && p.stock !== undefined ? Number(p.stock) : null;
   const rawNoOfItems = p.noOfItems !== null && p.noOfItems !== undefined ? Number(p.noOfItems) : null;
   let stockQty = 0;
-  if (rawStock !== null && rawStock > 0) {
+  if (rawStock !== null && !isNaN(rawStock)) {
     stockQty = rawStock;
-  } else if (rawNoOfItems !== null && rawNoOfItems > 0) {
-    stockQty = rawNoOfItems;
-  } else if (rawStock !== null) {
-    stockQty = rawStock;
-  } else if (rawNoOfItems !== null) {
+  } else if (rawNoOfItems !== null && !isNaN(rawNoOfItems)) {
     stockQty = rawNoOfItems;
   }
 
   const lowStockLimit = p.low_stock_threshold !== null && p.low_stock_threshold !== undefined ? Number(p.low_stock_threshold) : 5;
-  let stockStatus = p.stock_status || "In Stock";
-  if (stockQty <= 0 && stockStatus !== "Pre-Order") {
+  const rawStatus = (p.stock_status || "").toString().trim();
+  let stockStatus = "In Stock";
+  
+  if (rawStatus.toLowerCase().includes("out") || rawStatus.toLowerCase().includes("sold") || rawStatus.toLowerCase().includes("unavail")) {
     stockStatus = "Out of Stock";
-  } else if (stockQty > 0 && stockQty <= lowStockLimit && (stockStatus === "In Stock" || !stockStatus)) {
+  } else if (rawStatus.toLowerCase().includes("pre")) {
+    stockStatus = "Pre-Order";
+  } else if (rawStatus.toLowerCase().includes("low")) {
     stockStatus = "Low Stock";
-  } else if (stockQty > lowStockLimit && (stockStatus === "Out of Stock" || !stockStatus)) {
+  } else if (rawStatus.toLowerCase().includes("in stock") || rawStatus.toLowerCase().includes("avail")) {
+    stockStatus = "In Stock";
+  } else if (stockQty <= 0) {
+    stockStatus = "Out of Stock";
+  } else if (stockQty <= lowStockLimit) {
+    stockStatus = "Low Stock";
+  } else {
     stockStatus = "In Stock";
   }
+
+  const isActuallyInStock = stockStatus !== "Out of Stock" && (stockQty > 0 || stockStatus === "Pre-Order");
 
   const highlightsList = parseJsonOrList(p.ProductHighlights);
   const packageIncludesList = parseJsonOrList(p.package_includes);
   const tagsList = parseJsonOrList(p.tags || p.search_keywords);
+
+  const finalCategory = p.category || p.theme || "Puja Essentials";
+  const finalTheme = p.theme || p.category || "Puja Essentials";
 
   return {
     ...p,
@@ -108,10 +120,16 @@ const formatProductResponse = (p) => {
     discount_percent: discountPercent,
     stock: stockQty,
     stockQuantity: stockQty,
+    stock_quantity: stockQty,
+    quantity: stockQty,
+    qty: stockQty,
+    noOfItems: stockQty,
     stock_status: stockStatus,
     stockStatus: stockStatus,
-    inStock: !stockStatus.toLowerCase().includes("out") && stockQty > 0,
-    lowStockThreshold: p.low_stock_threshold || 5,
+    inStock: isActuallyInStock,
+    is_in_stock: isActuallyInStock,
+    isInStock: isActuallyInStock,
+    lowStockThreshold: lowStockLimit,
     sku: p.ProductCode || `PP-${p.id}`,
     ProductCode: p.ProductCode || `PP-${p.id}`,
     tax_type: p.tax_type || "Tax Inclusive",
@@ -120,8 +138,10 @@ const formatProductResponse = (p) => {
     // 3. Category & Taxonomy
     productType: p.productType || "Puja Samagri",
     product_type: p.productType || "Puja Samagri",
-    category: p.category || p.theme || "Puja Essentials",
-    theme: p.theme || p.category || "Puja Essentials",
+    category: finalCategory,
+    categoryName: finalCategory,
+    category_name: finalCategory,
+    theme: finalTheme,
     subcategory: p.subcategory || null,
     brand: p.brand || "PrabhuPooja",
     tags: tagsList,
@@ -1013,23 +1033,38 @@ exports.update = async (req, res) => {
       if (isNaN(parsedStock)) parsedStock = 0;
     }
 
-    let parsedStockStatus = b.stock_status || b.stockStatus;
+    const rawStatusInput = (b.stock_status || b.stockStatus || "").toString().trim();
+    let parsedStockStatus = undefined;
+    if (rawStatusInput) {
+      const lower = rawStatusInput.toLowerCase();
+      if (lower.includes("out") || lower.includes("sold") || lower.includes("unavail")) {
+        parsedStockStatus = "Out of Stock";
+      } else if (lower.includes("pre")) {
+        parsedStockStatus = "Pre-Order";
+      } else if (lower.includes("low")) {
+        parsedStockStatus = "Low Stock";
+      } else if (lower.includes("in stock") || lower.includes("avail")) {
+        parsedStockStatus = "In Stock";
+      } else {
+        parsedStockStatus = rawStatusInput;
+      }
+    }
+
     const lowLimit = parseInt(b.low_stock_threshold || b.lowStockThreshold || currentProduct.low_stock_threshold || 5, 10);
 
-    // If admin explicitly chose 'In Stock' but stock was 0, auto-assign positive stock (default 50 or previous qty)
-    if (parsedStockStatus === "In Stock" && (parsedStock === 0 || (parsedStock === undefined && (currentProduct.stock === 0 || currentProduct.stock === null)))) {
-      const prevQty = (currentProduct.noOfItems > 0 ? currentProduct.noOfItems : (currentProduct.stock > 0 ? currentProduct.stock : 50));
-      parsedStock = prevQty;
+    // Auto-align stock quantity and stock status
+    if (parsedStock !== undefined && parsedStock > 0) {
+      if (!parsedStockStatus || parsedStockStatus === "Out of Stock") {
+        parsedStockStatus = parsedStock <= lowLimit ? "Low Stock" : "In Stock";
+      }
+    } else if (parsedStock === 0) {
+      if (parsedStockStatus !== "Pre-Order") {
+        parsedStockStatus = "Out of Stock";
+      }
+    } else if (parsedStockStatus === "In Stock" && (currentProduct.stock <= 0 || currentProduct.stock === null)) {
+      parsedStock = (currentProduct.noOfItems > 0 ? currentProduct.noOfItems : 50);
     } else if (parsedStockStatus === "Out of Stock") {
       parsedStock = 0;
-    } else if (parsedStock !== undefined) {
-      if (parsedStock <= 0 && parsedStockStatus !== "Pre-Order") {
-        parsedStockStatus = "Out of Stock";
-      } else if (parsedStock > 0 && parsedStock <= lowLimit && (!parsedStockStatus || parsedStockStatus === "In Stock")) {
-        parsedStockStatus = "Low Stock";
-      } else if (parsedStock > lowLimit && (parsedStockStatus === "Out of Stock" || !parsedStockStatus)) {
-        parsedStockStatus = "In Stock";
-      }
     }
 
     if (parsedStock !== undefined) {
@@ -1188,6 +1223,13 @@ exports.update = async (req, res) => {
       `UPDATE products SET ${updateFields.join(", ")} WHERE id = ?`,
       values
     );
+
+    try {
+      await deleteCache("products:*");
+      await deleteCache("api_cache:/api/v1/products*");
+      await deleteCache(`api_cache:/api/v1/products/get/${id}`);
+      await deleteCache(`api_cache:/api/v1/products/getAll*`);
+    } catch (cErr) {}
 
     return res.status(200).send({
       success: true,
