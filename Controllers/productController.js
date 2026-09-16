@@ -169,6 +169,8 @@ const formatProductResponse = (p) => {
     },
 
     // 6. Shipping & Return Policies
+    delivery_charge: p.delivery_charge !== null && p.delivery_charge !== undefined && p.delivery_charge !== "" ? parseFloat(p.delivery_charge) : null,
+    deliveryCharge: p.delivery_charge !== null && p.delivery_charge !== undefined && p.delivery_charge !== "" ? parseFloat(p.delivery_charge) : null,
     shipping_class: p.shipping_class || "Standard",
     estimated_delivery_days: p.estimated_delivery_days || "3 - 5 Business Days",
     dispatch_time: p.dispatch_time || "Dispatched within 24 Hours",
