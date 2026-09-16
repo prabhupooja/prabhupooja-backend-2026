@@ -24,12 +24,36 @@ exports.create = async (req, res) => {
     }
 
     try {
-        const [data] = await db.query(
-            `INSERT INTO banner (image, redirect_url) VALUES(?, ?)`, 
-            [image, redirect_url]
-        );
+        let insertId;
+        try {
+            const [data] = await db.query(
+                `INSERT INTO banner (image, redirect_url) VALUES(?, ?)`, 
+                [image, redirect_url]
+            );
+            insertId = data?.insertId;
+        } catch (dbErr) {
+            // Auto-heal if redirect_url column is missing on live DB
+            if (dbErr.code === 'ER_BAD_FIELD_ERROR' || (dbErr.message && dbErr.message.includes('redirect_url'))) {
+                try {
+                    await db.query("ALTER TABLE banner ADD COLUMN redirect_url VARCHAR(500) NULL AFTER image");
+                    const [retryData] = await db.query(
+                        `INSERT INTO banner (image, redirect_url) VALUES(?, ?)`, 
+                        [image, redirect_url]
+                    );
+                    insertId = retryData?.insertId;
+                } catch (alterErr) {
+                    const [fallbackData] = await db.query(
+                        `INSERT INTO banner (image) VALUES(?)`, 
+                        [image]
+                    );
+                    insertId = fallbackData?.insertId;
+                }
+            } else {
+                throw dbErr;
+            }
+        }
 
-        if (!data || !data.insertId) {
+        if (!insertId) {
             return res.status(500).send({
                 success: false,
                 message: "Error in insert query"
@@ -43,7 +67,7 @@ exports.create = async (req, res) => {
             success: true,
             message: "Banner added successfully",
             data: {
-                id: data.insertId,
+                id: insertId,
                 image,
                 redirect_url
             }
@@ -73,16 +97,45 @@ exports.update = async (req, res) => {
 
     try {
         let result;
-        if (image) {
-            [result] = await db.query(
-                `UPDATE banner SET image = ?, redirect_url = COALESCE(?, redirect_url) WHERE id = ?`,
-                [image, redirect_url !== undefined ? redirect_url : null, id]
-            );
-        } else {
-            [result] = await db.query(
-                `UPDATE banner SET redirect_url = COALESCE(?, redirect_url) WHERE id = ?`,
-                [redirect_url !== undefined ? redirect_url : null, id]
-            );
+        try {
+            if (image) {
+                [result] = await db.query(
+                    `UPDATE banner SET image = ?, redirect_url = COALESCE(?, redirect_url) WHERE id = ?`,
+                    [image, redirect_url !== undefined ? redirect_url : null, id]
+                );
+            } else {
+                [result] = await db.query(
+                    `UPDATE banner SET redirect_url = COALESCE(?, redirect_url) WHERE id = ?`,
+                    [redirect_url !== undefined ? redirect_url : null, id]
+                );
+            }
+        } catch (dbErr) {
+            // Auto-heal if redirect_url column is missing
+            if (dbErr.code === 'ER_BAD_FIELD_ERROR' || (dbErr.message && dbErr.message.includes('redirect_url'))) {
+                try {
+                    await db.query("ALTER TABLE banner ADD COLUMN redirect_url VARCHAR(500) NULL AFTER image");
+                    if (image) {
+                        [result] = await db.query(
+                            `UPDATE banner SET image = ?, redirect_url = COALESCE(?, redirect_url) WHERE id = ?`,
+                            [image, redirect_url !== undefined ? redirect_url : null, id]
+                        );
+                    } else {
+                        [result] = await db.query(
+                            `UPDATE banner SET redirect_url = COALESCE(?, redirect_url) WHERE id = ?`,
+                            [redirect_url !== undefined ? redirect_url : null, id]
+                        );
+                    }
+                } catch (alterErr) {
+                    if (image) {
+                        [result] = await db.query(
+                            `UPDATE banner SET image = ? WHERE id = ?`,
+                            [image, id]
+                        );
+                    }
+                }
+            } else {
+                throw dbErr;
+            }
         }
 
         if (!result || result.affectedRows === 0) {

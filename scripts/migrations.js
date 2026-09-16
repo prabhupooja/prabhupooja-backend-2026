@@ -384,6 +384,30 @@ async function runMigrations() {
       console.warn("Note on ecommerce_banner table migration:", ecomErr.message);
     }
 
+    // 5b. Ensure 'banner' table exists and has redirect_url column
+    try {
+      const createBannerTable = `
+        CREATE TABLE IF NOT EXISTS banner (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          image VARCHAR(500) NOT NULL,
+          redirect_url VARCHAR(500) NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+      await db.query(createBannerTable);
+
+      const [bannerCols] = await db.query("SHOW COLUMNS FROM banner");
+      const bannerColNames = bannerCols.map(c => c.Field.toLowerCase());
+      if (!bannerColNames.includes('redirect_url')) {
+        await db.query("ALTER TABLE banner ADD COLUMN redirect_url VARCHAR(500) NULL AFTER image");
+        console.log("✅ Added 'redirect_url' column to 'banner' table.");
+      }
+      console.log("✅ Table 'banner' verified/created/updated successfully.");
+    } catch (bErr) {
+      console.warn("Note on banner table migration:", bErr.message);
+    }
+
     // 6. Ensure sellers table has all required columns for registration, documents, and dashboard
     try {
       const [sellerCols] = await db.query("SHOW COLUMNS FROM sellers");
