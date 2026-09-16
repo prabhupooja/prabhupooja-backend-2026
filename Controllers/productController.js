@@ -192,6 +192,16 @@ const formatProductResponse = (p) => {
     average_rating: parseFloat(p.average_rating || p.rating || 5.0),
     totalReviews: parseInt(p.total_reviews || 0, 10),
     total_reviews: parseInt(p.total_reviews || 0, 10),
+
+    // 9. Status & Activation
+    isDeleted: p.isDeleted !== undefined && p.isDeleted !== null ? Number(p.isDeleted) : 0,
+    is_deleted: p.isDeleted !== undefined && p.isDeleted !== null ? Number(p.isDeleted) : 0,
+    isActive: p.isDeleted === 0 || p.isDeleted === "0" || p.isDeleted === false,
+    is_active: p.isDeleted === 0 || p.isDeleted === "0" || p.isDeleted === false,
+    active: p.isDeleted === 0 || p.isDeleted === "0" || p.isDeleted === false,
+    status: (p.isDeleted === 0 || p.isDeleted === "0" || p.isDeleted === false) ? "active" : "inactive",
+    verified: p.verified !== undefined && p.verified !== null ? Number(p.verified) : 1,
+    isVerified: p.verified === 1 || p.verified === "1" || p.verified === true,
   };
 };
 
@@ -315,8 +325,8 @@ exports.create = async (req, res) => {
   const targetId = productId || id;
   const finalName = productName || name || title;
   const finalType = productType || product_type || "Puja Samagri";
-  const finalCategory = category || theme || "Puja Essentials";
-  const finalSubcategory = subcategory || subCategory || null;
+  const finalCategory = category || theme || req.body.categoryName || req.body.category_name || "Puja Essentials";
+  const finalSubcategory = subcategory || subCategory || req.body.subCategoryName || null;
   const finalBrand = brand || "PrabhuPooja";
   const finalColour = colour || color || "Multicolor";
   const finalStyle = style || "Traditional";
@@ -340,7 +350,15 @@ exports.create = async (req, res) => {
       : calcDiscount
   );
 
-  const rawStock = stock !== undefined ? stock : stock_quantity !== undefined ? stock_quantity : stockQuantity !== undefined ? stockQuantity : noOfItems !== undefined ? noOfItems : noOfPieces !== undefined ? noOfPieces : 10;
+  const rawStock = stock !== undefined ? stock :
+    req.body.quantity !== undefined ? req.body.quantity :
+    req.body.qty !== undefined ? req.body.qty :
+    stock_quantity !== undefined ? stock_quantity :
+    stockQuantity !== undefined ? stockQuantity :
+    req.body.stockQty !== undefined ? req.body.stockQty :
+    req.body.stock_qty !== undefined ? req.body.stock_qty :
+    noOfItems !== undefined ? noOfItems :
+    noOfPieces !== undefined ? noOfPieces : 10;
   const finalStock = parseInt(rawStock, 10) || 0;
   const finalStockStatus = stock_status || stockStatus || (finalStock > 0 ? "In Stock" : "Out of Stock");
   const finalLowStock = parseInt(low_stock_threshold || lowStockThreshold || 5, 10);
@@ -958,13 +976,18 @@ exports.update = async (req, res) => {
     if (b.productType !== undefined || b.product_type !== undefined) {
       addField("productType", b.productType || b.product_type);
     }
-    if (b.category !== undefined || b.theme !== undefined) {
-      const cat = b.category || b.theme;
-      addField("category", cat);
-      addField("theme", cat);
+    if (b.category !== undefined || b.theme !== undefined || b.categoryName !== undefined || b.category_name !== undefined || b.categoryId !== undefined || b.category_id !== undefined) {
+      const cat = b.category || b.theme || b.categoryName || b.category_name || b.categoryId || b.category_id;
+      if (cat !== undefined && cat !== null && cat !== "") {
+        addField("category", cat);
+        addField("theme", cat);
+      }
     }
-    if (b.subcategory !== undefined || b.subCategory !== undefined) {
-      addField("subcategory", b.subcategory || b.subCategory);
+    if (b.subcategory !== undefined || b.subCategory !== undefined || b.subCategoryName !== undefined) {
+      const sub = b.subcategory || b.subCategory || b.subCategoryName;
+      if (sub !== undefined && sub !== null) {
+        addField("subcategory", sub);
+      }
     }
     if (b.brand !== undefined) addField("brand", b.brand);
     if (b.colour !== undefined || b.color !== undefined) addField("colour", b.colour || b.color);
@@ -975,9 +998,18 @@ exports.update = async (req, res) => {
     }
 
     let parsedStock = undefined;
-    if (b.stock !== undefined || b.stock_quantity !== undefined || b.noOfItems !== undefined || b.noOfPieces !== undefined) {
-      const val = b.stock !== undefined ? b.stock : b.stock_quantity !== undefined ? b.stock_quantity : b.noOfItems !== undefined ? b.noOfItems : b.noOfPieces;
-      parsedStock = val === "" || val === null ? 0 : parseInt(val, 10);
+    const rawStockVal = b.stock !== undefined ? b.stock :
+      b.quantity !== undefined ? b.quantity :
+      b.qty !== undefined ? b.qty :
+      b.stockQuantity !== undefined ? b.stockQuantity :
+      b.stock_quantity !== undefined ? b.stock_quantity :
+      b.stockQty !== undefined ? b.stockQty :
+      b.stock_qty !== undefined ? b.stock_qty :
+      b.noOfItems !== undefined ? b.noOfItems :
+      b.noOfPieces !== undefined ? b.noOfPieces : undefined;
+
+    if (rawStockVal !== undefined) {
+      parsedStock = rawStockVal === "" || rawStockVal === null ? 0 : parseInt(rawStockVal, 10);
       if (isNaN(parsedStock)) parsedStock = 0;
     }
 
@@ -1099,6 +1131,23 @@ exports.update = async (req, res) => {
 
     if (b.verified !== undefined) addField("verified", Number(b.verified));
 
+    // Status & Activation update
+    if (b.isDeleted !== undefined || b.is_deleted !== undefined) {
+      const delVal = b.isDeleted !== undefined ? b.isDeleted : b.is_deleted;
+      const parsedDel = delVal === true || delVal === "true" || delVal === 1 || delVal === "1" ? 1 : 0;
+      addField("isDeleted", parsedDel);
+    } else if (b.isActive !== undefined || b.is_active !== undefined || b.active !== undefined) {
+      const actVal = b.isActive !== undefined ? b.isActive : b.is_active !== undefined ? b.is_active : b.active;
+      const parsedDel = actVal === false || actVal === "false" || actVal === 0 || actVal === "0" ? 1 : 0;
+      addField("isDeleted", parsedDel);
+    } else if (b.status !== undefined) {
+      if (b.status === "inactive" || b.status === "deactive" || b.status === "disabled" || b.status === 0 || b.status === "0") {
+        addField("isDeleted", 1);
+      } else if (b.status === "active" || b.status === "enabled" || b.status === 1 || b.status === "1") {
+        addField("isDeleted", 0);
+      }
+    }
+
     // Handle images array
     const rawExisting = b.existingImages !== undefined ? b.existingImages : b.existing_images;
     if (rawExisting !== undefined || uploadedImages.length > 0) {
@@ -1181,6 +1230,10 @@ exports.delete = async (req, res) => {
       message: "Internal Server Error",
     });
   }
+};
+
+exports.updateByMerchant = async (req, res) => {
+  return exports.update(req, res);
 };
 
 exports.deleteByMerchant = async (req, res) => {
@@ -1274,7 +1327,8 @@ exports.searchProduct = async (req, res) => {
 };
 
 exports.productActive = async (req, res) => {
-  const { productId } = req.params;
+  const productId = req.params.productId || req.params.id;
+  const b = req.body || {};
 
   try {
     // Check if product exists
@@ -1289,22 +1343,45 @@ exports.productActive = async (req, res) => {
       });
     }
 
-    // Toggle isDeleted
-    const currentStatus = product[0].isDeleted;
-    const newStatus = currentStatus === 0 ? 1 : 0;
+    let newStatus;
+    if (b.isDeleted !== undefined || b.is_deleted !== undefined) {
+      const val = b.isDeleted !== undefined ? b.isDeleted : b.is_deleted;
+      newStatus = val === true || val === "true" || val === 1 || val === "1" ? 1 : 0;
+    } else if (b.isActive !== undefined || b.is_active !== undefined || b.active !== undefined) {
+      const val = b.isActive !== undefined ? b.isActive : b.is_active !== undefined ? b.is_active : b.active;
+      newStatus = val === false || val === "false" || val === 0 || val === "0" ? 1 : 0;
+    } else if (b.status !== undefined) {
+      newStatus = (b.status === "inactive" || b.status === "deactive" || b.status === "disabled" || b.status === 0 || b.status === "0") ? 1 : 0;
+    } else {
+      const currentStatus = Number(product[0].isDeleted || 0);
+      newStatus = currentStatus === 0 ? 1 : 0;
+    }
 
     await db.query(`UPDATE products SET isDeleted = ? WHERE id = ?`, [
       newStatus,
       productId,
     ]);
-    const message =
-      newStatus === 0 ? "Product is active" : "Product is inactive now";
+
+    try {
+      await deleteCache("products:*");
+      await deleteCache("api_cache:/api/v1/products*");
+    } catch (cErr) {}
+
+    const isNowActive = newStatus === 0;
+    const message = isNowActive ? "Product activated successfully" : "Product deactivated successfully";
+
     return res.status(200).send({
       success: true,
       message: message,
+      id: productId,
+      productId: productId,
+      isDeleted: newStatus,
+      isActive: isNowActive,
+      is_active: isNowActive,
+      status: isNowActive ? "active" : "inactive",
     });
   } catch (error) {
-    console.error(error);
+    console.error("productActive error:", error);
     return res.status(500).send({
       success: false,
       message: "Internal Server Error",
