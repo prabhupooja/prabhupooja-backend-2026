@@ -5,6 +5,7 @@ const fs = require('fs');
 const seller = require("../Controllers/sellerControler");
 const { sellerVerifyToken } = require('../config/sellerToken');
 const { AdminOrAgentVerifyToken } = require('../config/adminOrAgentToken');
+const { AdminverifyToken } = require('../config/admintoken');
 const router = express.Router();
 
 // Configure upload storage (Supports S3 if credentials exist, falls back to disk storage safely)
@@ -102,7 +103,7 @@ router.get('/getSellerTicket', seller.getSellerTicket);
 router.get('/tickets', seller.getSellerTicket);
 router.delete('/delete-seller', sellerVerifyToken, seller.deleteSeller);
 router.delete('/delete-seller/:id', sellerVerifyToken, seller.deleteSeller);
-router.delete('/admin-delete-seller/:id', AdminOrAgentVerifyToken, seller.deleteSeller);
+router.delete('/admin-delete-seller/:id', AdminverifyToken, seller.deleteSeller);
 
 // 7. Admin & Agent Shared Seller Management Endpoints
 router.get("/getAll-seller", AdminOrAgentVerifyToken, seller.getAllSellers);

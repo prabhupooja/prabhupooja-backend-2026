@@ -2,6 +2,7 @@ const nodemailer = require("nodemailer");
 const db = require("../config/db");
 const dotenv = require('dotenv');
 const { getIo } = require("../config/panditSoket");
+const { recordAgentAuditLog } = require("./agentControler");
 dotenv.config();
 
 const formatPanditImage = (img) => {
@@ -378,9 +379,10 @@ exports.get = async (req, res) => {
     `);
 
     if (!rows || rows.length === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "No services found",
+      return res.status(200).send({
+        success: true,
+        data: [],
+        message: "No pandit records found",
       });
     }
 
@@ -737,6 +739,18 @@ exports.verifyPandit = async (req, res) => {
         console.warn("Mail error on verify:", mErr.message);
       }
 
+      if (req.user) {
+        recordAgentAuditLog({
+          agentId: req.user.id,
+          agentName: req.user.name || (req.user.role === 'admin' ? 'Admin' : 'Agent'),
+          action: 'VERIFY_PANDIT',
+          targetType: 'pandit',
+          targetId: id,
+          details: { panditName: pandit.name, panditEmail: pandit.email },
+          ipAddress: req.ip
+        });
+      }
+
       return res.status(200).send({
         success: true,
         message: 'Pandit verified and approved successfully',
@@ -778,6 +792,18 @@ exports.rejectPandit = async (req, res) => {
         await transporter.sendMail(mailOptions);
       } catch (mErr) {
         console.warn("Mail error on reject:", mErr.message);
+      }
+
+      if (req.user) {
+        recordAgentAuditLog({
+          agentId: req.user.id,
+          agentName: req.user.name || (req.user.role === 'admin' ? 'Admin' : 'Agent'),
+          action: 'REJECT_PANDIT',
+          targetType: 'pandit',
+          targetId: id,
+          details: { panditName: pandit.name, reason },
+          ipAddress: req.ip
+        });
       }
 
       return res.status(200).send({
@@ -1006,14 +1032,18 @@ exports.deletePandit = async (req, res) => {
 
 exports.updatePanditStatus = async (req, res) => {
   const { id } = req.params;
-  const { field, status } = req.body;
+  const { field, status, reason, rejection_reason } = req.body;
 
-  // Map field names (support both camelCase and snake_case)
+  // Map field names (support both camelCase and snake_case, single and double 'a')
   const fieldMap = {
     gurukulStatus: "gurukulStatus",
     gurukul_status: "gurukulStatus",
+    certificateStatus: "gurukulStatus",
+    certificate_status: "gurukulStatus",
     aadharStatus: "aadharStatus",
     aadhar_status: "aadharStatus",
+    aadhaarStatus: "aadharStatus",
+    aadhaar_status: "aadharStatus",
     panStatus: "panStatus",
     pan_status: "panStatus"
   };
@@ -1022,7 +1052,7 @@ exports.updatePanditStatus = async (req, res) => {
   if (!targetField) {
     return res.status(400).json({
       success: false,
-      message: `Invalid field name '${field}'. Allowed: gurukulStatus, aadharStatus, panStatus`
+      message: `Invalid field name '${field}'. Allowed: aadhaar_status, aadhar_status, pan_status, gurukul_status, certificate_status`
     });
   }
 
@@ -1044,6 +1074,22 @@ exports.updatePanditStatus = async (req, res) => {
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Pandit not found or no changes made" });
+    }
+
+    if (req.user) {
+      try {
+        await recordAgentAuditLog({
+          agentId: req.user.id,
+          agentName: req.user.name || (req.user.role === 'admin' ? 'Admin' : 'Agent'),
+          action: 'UPDATE_PANDIT_DOC_STATUS',
+          targetType: 'pandit',
+          targetId: id,
+          details: { field: targetField, status: dbStatus, reason: reason || rejection_reason || null },
+          ipAddress: req.ip
+        });
+      } catch (logErr) {
+        console.warn("Audit log error in updatePanditStatus:", logErr.message);
+      }
     }
 
     return res.status(200).json({

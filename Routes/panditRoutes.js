@@ -5,6 +5,7 @@ const { S3Client } = require("@aws-sdk/client-s3");
 const panditController = require("../Controllers/panditController");
 const { verifyToken } = require("../config/genratetokenConfig");
 const { AdminOrAgentVerifyToken } = require("../config/adminOrAgentToken");
+const { AdminverifyToken } = require("../config/admintoken");
 
 console.log("here are the cred", process.env.AWS_REGION)
 
@@ -107,7 +108,7 @@ router.put("/verifyPandit/:id", AdminOrAgentVerifyToken, panditController.verify
 router.put("/verify/:id", AdminOrAgentVerifyToken, panditController.verifyPandit);
 router.post("/rejectPandit/:id", AdminOrAgentVerifyToken, panditController.rejectPandit);
 router.put("/rejectPandit/:id", AdminOrAgentVerifyToken, panditController.rejectPandit);
-router.delete('/delete/:id', AdminOrAgentVerifyToken, panditController.deletePandit);
+router.delete('/delete/:id', AdminverifyToken, panditController.deletePandit);
 
 // Online Status Endpoints
 router.post('/toggleOnline', panditController.toggleOnline);

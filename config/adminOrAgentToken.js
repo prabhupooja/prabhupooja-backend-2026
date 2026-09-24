@@ -12,8 +12,8 @@ exports.AdminOrAgentVerifyToken = (req, res, next) => {
   }
 
   const tokenValue = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : authHeader.split(" ")[1] || authHeader;
+    ? authHeader.slice(7).trim()
+    : (authHeader.split(" ")[1] || authHeader).trim();
 
   jwt.verify(tokenValue, jwt_secret_key, (err, decoded) => {
     if (err) {
@@ -22,9 +22,21 @@ exports.AdminOrAgentVerifyToken = (req, res, next) => {
 
     req.user = {
       id: decoded.userId || decoded.id,
-      role: decoded.role || "staff"
+      role: decoded.role || (decoded.email && !decoded.username ? "agent" : "admin"),
+      email: decoded.email,
+      name: decoded.name
     };
 
     next();
   });
+};
+
+exports.RequireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role === 'agent' || req.user.role === 'staff') {
+    return res.status(403).json({ 
+      success: false, 
+      message: "Access forbidden: This action requires Admin privileges" 
+    });
+  }
+  next();
 };

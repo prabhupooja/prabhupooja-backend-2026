@@ -4,36 +4,46 @@ dotenv.config();
 
 const jwt_secret_key = process.env.JWT_SECRET_KEY || "prabhuPooja001"; 
 
-exports.AgentGenerateToken = (userId) => {
+exports.AgentGenerateToken = (agentOrId) => {
+  const isObj = typeof agentOrId === 'object' && agentOrId !== null;
+  const id = isObj ? agentOrId.id : agentOrId;
+  const email = isObj ? agentOrId.email : undefined;
+  const name = isObj ? agentOrId.name : undefined;
 
   const payload = {
-    userId
-   };
-  return jwt.sign(payload,jwt_secret_key, {expiresIn: "15d"} );
+    userId: id,
+    id: id,
+    role: "agent",
+    email: email,
+    name: name
+  };
+
+  return jwt.sign(payload, jwt_secret_key, { expiresIn: "15d" });
 };
 
 exports.AgentVerifyToken = (req, res, next) => {
- 
-  const token = req.headers.authorization; 
+  const authHeader = req.headers.authorization;
 
-if(!token){
-
-  return res.status(401).json({message:"No Token Provied!"})
-}
-
-const tokenValue = token.split(' ')[1];
-
-jwt.verify(tokenValue,  JWT_KEY= jwt_secret_key, (err,decoded)=>{
-  if(err){
-
-    return res.status(401).json({message:"Failed to Authenticate"});
+  if (!authHeader) {
+    return res.status(401).json({ success: false, message: "No Token Provided!" });
   }
 
-  req.user = {id: decoded.userId};
+  const tokenValue = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : authHeader.split(" ")[1] || authHeader;
 
-  next();
+  jwt.verify(tokenValue, jwt_secret_key, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ success: false, message: "Failed to Authenticate Token" });
+    }
 
+    req.user = {
+      id: decoded.userId || decoded.id,
+      role: decoded.role || "agent",
+      email: decoded.email,
+      name: decoded.name
+    };
 
-})
-
+    next();
+  });
 };

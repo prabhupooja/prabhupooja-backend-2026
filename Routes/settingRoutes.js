@@ -8,9 +8,9 @@ const router = express.Router();
 // Public / User route to get delivery charge setting & rules
 router.get("/delivery-charge", settingController.getDeliveryChargeSetting);
 
-// Admin routes to update delivery charge configuration
-router.put("/delivery-charge", AdminOrAgentVerifyToken, settingController.updateDeliveryChargeSetting);
-router.post("/delivery-charge", AdminOrAgentVerifyToken, settingController.updateDeliveryChargeSetting);
+// Admin routes to update delivery charge configuration (Admin Only)
+router.put("/delivery-charge", AdminverifyToken, settingController.updateDeliveryChargeSetting);
+router.post("/delivery-charge", AdminverifyToken, settingController.updateDeliveryChargeSetting);
 
 // Admin general settings
 router.get("/all", AdminOrAgentVerifyToken, settingController.getAllSettings);

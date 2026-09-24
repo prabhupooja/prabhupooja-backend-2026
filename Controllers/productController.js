@@ -213,6 +213,16 @@ const formatProductResponse = (p) => {
     totalReviews: parseInt(p.total_reviews || 0, 10),
     total_reviews: parseInt(p.total_reviews || 0, 10),
 
+    // 8b. External Affiliate / Redirect Link
+    redirect_url: p.redirect_url ? String(p.redirect_url).trim() : null,
+    redirectUrl: p.redirect_url ? String(p.redirect_url).trim() : null,
+    external_url: p.redirect_url ? String(p.redirect_url).trim() : null,
+    externalUrl: p.redirect_url ? String(p.redirect_url).trim() : null,
+    isExternal: Boolean(p.redirect_url && String(p.redirect_url).trim() !== ""),
+    is_external: Boolean(p.redirect_url && String(p.redirect_url).trim() !== ""),
+    external_button_text: p.external_button_text || "Buy Now",
+    externalButtonText: p.external_button_text || "Buy Now",
+
     // 9. Status & Activation
     isDeleted: p.isDeleted !== undefined && p.isDeleted !== null ? Number(p.isDeleted) : 0,
     is_deleted: p.isDeleted !== undefined && p.isDeleted !== null ? Number(p.isDeleted) : 0,
@@ -266,6 +276,12 @@ exports.create = async (req, res) => {
     discountPercentage,
     delivery_charge,
     deliveryCharge,
+    redirect_url,
+    redirectUrl,
+    external_url,
+    externalUrl,
+    external_button_text,
+    externalButtonText,
     tax_type,
     taxType,
     gst_percentage,
@@ -391,6 +407,13 @@ exports.create = async (req, res) => {
       ? parseFloat(rawDelivery)
       : null;
 
+  const rawRedirect = redirect_url !== undefined ? redirect_url : redirectUrl !== undefined ? redirectUrl : external_url !== undefined ? external_url : externalUrl;
+  let finalRedirectUrl = rawRedirect !== undefined && rawRedirect !== null && rawRedirect !== "" ? String(rawRedirect).trim() : null;
+  if (finalRedirectUrl && !/^https?:\/\//i.test(finalRedirectUrl)) {
+    finalRedirectUrl = "https://" + finalRedirectUrl;
+  }
+  const finalExternalButtonText = external_button_text || externalButtonText || null;
+
   const finalTaxType = tax_type || taxType || "Tax Inclusive";
   const finalGst = parseFloat(gst_percentage || gst || 0);
 
@@ -479,6 +502,7 @@ exports.create = async (req, res) => {
           productName = ?, theme = ?, category = ?, subcategory = ?, brand = ?, colour = ?, 
           style = ?, material = ?, specialFeature = ?, noOfItems = ?, stock = ?, stock_status = ?,
           low_stock_threshold = ?, price = ?, offerPrice = ?, discount_percent = ?, delivery_charge = ?,
+          redirect_url = ?, external_button_text = ?,
           tax_type = ?, gst_percentage = ?, size_fit = ?, length = ?, Height = ?, width = ?, depth = ?,
           Dimension = ?, Weight = ?, specification_unit = ?, short_description = ?, description = ?,
           ProductHighlights = ?, package_includes = ?, Benefits = ?, UsageAndCareInstructions = ?,
@@ -506,6 +530,8 @@ exports.create = async (req, res) => {
           finalOfferPrice,
           finalDiscountPercent,
           parsedDeliveryCharge,
+          finalRedirectUrl,
+          finalExternalButtonText,
           finalTaxType,
           finalGst,
           finalSizeFrt,
@@ -562,7 +588,7 @@ exports.create = async (req, res) => {
       `INSERT INTO products (
         productName, theme, category, subcategory, productType, brand, colour, style, material, 
         specialFeature, noOfItems, stock, stock_status, low_stock_threshold, price, offerPrice, 
-        discount_percent, delivery_charge, tax_type, gst_percentage, size_fit, length, Height, 
+        discount_percent, delivery_charge, redirect_url, external_button_text, tax_type, gst_percentage, size_fit, length, Height, 
         width, depth, Dimension, Weight, specification_unit, short_description, description, 
         ProductHighlights, package_includes, Benefits, UsageAndCareInstructions, disclaimer, 
         shipping_class, estimated_delivery_days, dispatch_time, return_available, replacement_available, 
@@ -571,7 +597,7 @@ exports.create = async (req, res) => {
         verified, isDeleted, created_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW()
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW()
       )`,
       [
         finalName,
@@ -592,6 +618,8 @@ exports.create = async (req, res) => {
         finalOfferPrice,
         finalDiscountPercent,
         parsedDeliveryCharge,
+        finalRedirectUrl,
+        finalExternalButtonText,
         finalTaxType,
         finalGst,
         finalSizeFrt,
@@ -649,6 +677,19 @@ exports.create = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in product create/update:", error);
+
+    // Auto-heal if redirect_url column is missing on live DB
+    if (error.code === 'ER_BAD_FIELD_ERROR' || (error.message && (error.message.includes('redirect_url') || error.message.includes('external_button_text')))) {
+      try {
+        await db.query("ALTER TABLE products ADD COLUMN redirect_url VARCHAR(1000) DEFAULT NULL AFTER delivery_charge");
+        await db.query("ALTER TABLE products ADD COLUMN external_button_text VARCHAR(100) DEFAULT NULL AFTER redirect_url");
+        console.log("✅ Auto-healed redirect_url and external_button_text in products table.");
+        return exports.create(req, res);
+      } catch (autoErr) {
+        console.warn("Auto-heal migration note for products:", autoErr.message);
+      }
+    }
+
     return res.status(500).json({
       success: false,
       message: "Internal Server Error",
@@ -1091,6 +1132,19 @@ exports.update = async (req, res) => {
     const updateDeliv = b.delivery_charge !== undefined ? b.delivery_charge : b.deliveryCharge;
     if (updateDeliv !== undefined) {
       addField("delivery_charge", updateDeliv === null || updateDeliv === "" ? null : parseFloat(updateDeliv));
+    }
+
+    if (b.redirect_url !== undefined || b.redirectUrl !== undefined || b.external_url !== undefined || b.externalUrl !== undefined) {
+      const rUrl = b.redirect_url !== undefined ? b.redirect_url : b.redirectUrl !== undefined ? b.redirectUrl : b.external_url !== undefined ? b.external_url : b.externalUrl;
+      let cleanUrl = rUrl === null || rUrl === "" ? null : String(rUrl).trim();
+      if (cleanUrl && !/^https?:\/\//i.test(cleanUrl)) {
+        cleanUrl = "https://" + cleanUrl;
+      }
+      addField("redirect_url", cleanUrl);
+    }
+    if (b.external_button_text !== undefined || b.externalButtonText !== undefined) {
+      const btn = b.external_button_text !== undefined ? b.external_button_text : b.externalButtonText;
+      addField("external_button_text", btn ? String(btn).trim() : null);
     }
 
     if (b.tax_type !== undefined || b.taxType !== undefined) addField("tax_type", b.tax_type || b.taxType);
@@ -1629,6 +1683,19 @@ exports.updateByMerchant = async (req, res) => {
     const updateDeliv = b.delivery_charge !== undefined ? b.delivery_charge : b.deliveryCharge;
     if (updateDeliv !== undefined) {
       addField("delivery_charge", updateDeliv === null || updateDeliv === "" ? null : parseFloat(updateDeliv));
+    }
+
+    if (b.redirect_url !== undefined || b.redirectUrl !== undefined || b.external_url !== undefined || b.externalUrl !== undefined) {
+      const rUrl = b.redirect_url !== undefined ? b.redirect_url : b.redirectUrl !== undefined ? b.redirectUrl : b.external_url !== undefined ? b.external_url : b.externalUrl;
+      let cleanUrl = rUrl === null || rUrl === "" ? null : String(rUrl).trim();
+      if (cleanUrl && !/^https?:\/\//i.test(cleanUrl)) {
+        cleanUrl = "https://" + cleanUrl;
+      }
+      addField("redirect_url", cleanUrl);
+    }
+    if (b.external_button_text !== undefined || b.externalButtonText !== undefined) {
+      const btn = b.external_button_text !== undefined ? b.external_button_text : b.externalButtonText;
+      addField("external_button_text", btn ? String(btn).trim() : null);
     }
 
     if (b.tax_type !== undefined || b.taxType !== undefined) addField("tax_type", b.tax_type || b.taxType);

@@ -25,15 +25,24 @@ const s3 = new S3Client({
     }),
   });
 
-const { AdminOrAgentVerifyToken } = require('../config/adminOrAgentToken');
+const { AdminOrAgentVerifyToken, RequireAdmin } = require('../config/adminOrAgentToken');
 
+// Public
 router.post('/login', agentController.login);
-router.post('/newcreate', upload.single("profile"), AdminOrAgentVerifyToken, agentController.create);
-router.get('/getall', AdminOrAgentVerifyToken, agentController.getAllAgents);
-router.get('/get/:id', AdminOrAgentVerifyToken, agentController.getAgentById);
-router.put('/update/:id', upload.single("profile"), AdminOrAgentVerifyToken, agentController.updateAgentById);
-router.delete('/delete/:id', AdminOrAgentVerifyToken, agentController.deleteAgentById);
+
+// Agent Dashboard & Self-Service
+router.get('/stats', AdminOrAgentVerifyToken, agentController.getAgentDashboardStats);
+router.get('/logs', AdminOrAgentVerifyToken, agentController.getAgentLogs);
 router.get('/agentProfile', AdminOrAgentVerifyToken, agentController.getAgentProfileByToken);
 router.put('/updateProfile', upload.single("profile"), AdminOrAgentVerifyToken, agentController.updateAgentProfile);
+router.put('/change-password', AdminOrAgentVerifyToken, agentController.changePassword);
+
+// Admin-Only Agent Management
+router.post('/newcreate', upload.single("profile"), AdminverifyToken, agentController.create);
+router.get('/getall', AdminverifyToken, agentController.getAllAgents);
+router.get('/get/:id', AdminverifyToken, agentController.getAgentById);
+router.put('/update/:id', upload.single("profile"), AdminverifyToken, agentController.updateAgentById);
+router.put('/status/:id', AdminverifyToken, agentController.toggleAgentStatus);
+router.delete('/delete/:id', AdminverifyToken, agentController.deleteAgentById);
 
 module.exports = router;

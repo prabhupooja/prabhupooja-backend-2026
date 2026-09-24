@@ -528,6 +528,8 @@ async function runMigrations() {
 
       const standardProductCols = [
         { name: "delivery_charge", def: "DECIMAL(10,2) DEFAULT NULL" },
+        { name: "redirect_url", def: "VARCHAR(1000) DEFAULT NULL" },
+        { name: "external_button_text", def: "VARCHAR(100) DEFAULT NULL" },
         { name: "productType", def: "VARCHAR(100) DEFAULT 'Puja Samagri'" },
         { name: "category", def: "VARCHAR(255) DEFAULT NULL" },
         { name: "subcategory", def: "VARCHAR(255) DEFAULT NULL" },
@@ -660,6 +662,71 @@ async function runMigrations() {
       }
     } catch (pbSchemaErr) {
       console.warn("Note on prasad_booking table migration:", pbSchemaErr.message);
+    }
+
+    // 13. Ensure agent table has status, permissions, created_at, updated_at, and create agent_audit_logs table
+    try {
+      // Ensure agent table exists
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS agent (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          email VARCHAR(255) NOT NULL,
+          password VARCHAR(255) NOT NULL,
+          role VARCHAR(255) NOT NULL DEFAULT 'agent',
+          name VARCHAR(255) DEFAULT NULL,
+          profile VARCHAR(500) DEFAULT NULL,
+          number VARCHAR(20) DEFAULT NULL,
+          gender VARCHAR(50) DEFAULT NULL,
+          status ENUM('active', 'inactive', 'blocked') DEFAULT 'active',
+          permissions TEXT DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_agent_email (email),
+          INDEX idx_agent_number (number),
+          INDEX idx_agent_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      const [agentCols] = await db.query("SHOW COLUMNS FROM agent");
+      const agentColNames = agentCols.map(c => c.Field.toLowerCase());
+
+      if (!agentColNames.includes('status')) {
+        await db.query("ALTER TABLE agent ADD COLUMN status ENUM('active', 'inactive', 'blocked') DEFAULT 'active'");
+        console.log("✅ Added 'status' column to 'agent' table.");
+      }
+      if (!agentColNames.includes('permissions')) {
+        await db.query("ALTER TABLE agent ADD COLUMN permissions TEXT DEFAULT NULL");
+        console.log("✅ Added 'permissions' column to 'agent' table.");
+      }
+      if (!agentColNames.includes('created_at')) {
+        await db.query("ALTER TABLE agent ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        console.log("✅ Added 'created_at' column to 'agent' table.");
+      }
+      if (!agentColNames.includes('updated_at')) {
+        await db.query("ALTER TABLE agent ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+        console.log("✅ Added 'updated_at' column to 'agent' table.");
+      }
+
+      // Create agent_audit_logs table
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS agent_audit_logs (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          agent_id INT NOT NULL,
+          agent_name VARCHAR(255) DEFAULT NULL,
+          action VARCHAR(100) NOT NULL,
+          target_type VARCHAR(50) DEFAULT NULL,
+          target_id VARCHAR(100) DEFAULT NULL,
+          details TEXT DEFAULT NULL,
+          ip_address VARCHAR(100) DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_audit_agent_id (agent_id),
+          INDEX idx_audit_action (action),
+          INDEX idx_audit_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+      console.log("✅ Table 'agent_audit_logs' verified/created successfully.");
+    } catch (agentSchemaErr) {
+      console.warn("Note on agent table migration:", agentSchemaErr.message);
     }
 
     console.log("=== MIGRATIONS COMPLETE ===");

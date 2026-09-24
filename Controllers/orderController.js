@@ -2829,6 +2829,11 @@ exports.getByOrderId = async (req, res) => {
       order: orderDetails,
       products: productDetails.filter(Boolean), // remove undefined/null if any
       invoiceUrl: pathUrl,
+      data: {
+        order: orderDetails,
+        products: productDetails.filter(Boolean),
+        invoiceUrl: pathUrl,
+      },
     });
   } catch (error) {
     console.error("Error in getByOrderId:", error);

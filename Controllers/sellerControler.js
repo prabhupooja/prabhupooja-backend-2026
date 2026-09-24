@@ -7,6 +7,7 @@ const dotenv = require("dotenv");
 dotenv.config();
 const axios = require("axios");
 const { sendNotification } = require("./notificationController");
+const { recordAgentAuditLog } = require("./agentControler");
 
 // Helper to extract uploaded file location/path from either Array or Object files
 const extractFile = (files, ...fieldKeys) => {
@@ -875,30 +876,66 @@ exports.getSellerById = async (req, res) => {
  */
 exports.updateSellerStatus = async (req, res) => {
   const { id } = req.params;
-  const { field, status, rejection_reason } = req.body;
-  const allowedFields = ["aadhaar_status", "pan_status", "gst_status", "address_proof_status", "bank_status", "status"];
-  const allowedStatuses = ["pending", "approved", "rejected", "active", "suspended"];
+  const { field, status, reason, rejection_reason } = req.body;
 
-  if (field && !allowedFields.includes(field)) {
-    return res.status(400).json({ success: false, message: "Invalid field name" });
+  const fieldMap = {
+    aadhaar_status: "aadhaar_status",
+    aadhaarStatus: "aadhaar_status",
+    aadhar_status: "aadhaar_status",
+    aadharStatus: "aadhaar_status",
+    pan_status: "pan_status",
+    panStatus: "pan_status",
+    gst_status: "gst_status",
+    gstStatus: "gst_status",
+    address_proof_status: "address_proof_status",
+    addressProofStatus: "address_proof_status",
+    bank_status: "bank_status",
+    bankStatus: "bank_status",
+    status: "status"
+  };
+
+  const updateField = field ? fieldMap[field] : "status";
+  if (field && !updateField) {
+    return res.status(400).json({ success: false, message: `Invalid field name '${field}'. Allowed: aadhaar_status, pan_status, gst_status, address_proof_status, bank_status, status` });
   }
 
-  if (status && !allowedStatuses.includes(status)) {
-    return res.status(400).json({ success: false, message: "Invalid status value" });
+  const normalizedStatus = (status || "").toLowerCase();
+  const allowedStatuses = ["pending", "approved", "verified", "rejected", "active", "suspended"];
+
+  if (normalizedStatus && !allowedStatuses.includes(normalizedStatus)) {
+    return res.status(400).json({ success: false, message: "Invalid status value. Allowed: pending, approved, verified, rejected, active, suspended" });
   }
+
+  const dbStatus = normalizedStatus === "verified" ? "approved" : normalizedStatus;
+  const finalReason = reason || rejection_reason || null;
 
   try {
-    const updateField = field || "status";
     const query = `UPDATE sellers SET ${updateField} = ?, rejection_reason = ? WHERE id = ?`;
-    const [result] = await db.query(query, [status, rejection_reason || null, id]);
+    const [result] = await db.query(query, [dbStatus, finalReason, id]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Seller not found" });
     }
 
-    await sendNotification(id, `Your seller ${updateField.replace(/_/g, " ")} has been updated to ${status}.`);
+    await sendNotification(id, `Your seller ${updateField.replace(/_/g, " ")} has been updated to ${dbStatus}.`);
 
-    res.status(200).json({ success: true, message: `Seller ${updateField} updated successfully` });
+    if (req.user) {
+      try {
+        await recordAgentAuditLog({
+          agentId: req.user.id,
+          agentName: req.user.name || (req.user.role === 'admin' ? 'Admin' : 'Agent'),
+          action: 'UPDATE_SELLER_DOC_STATUS',
+          targetType: 'seller',
+          targetId: id,
+          details: { field: updateField, status: dbStatus, reason: finalReason },
+          ipAddress: req.ip
+        });
+      } catch (logErr) {
+        console.warn("Audit log error in updateSellerStatus:", logErr.message);
+      }
+    }
+
+    res.status(200).json({ success: true, message: `Seller ${updateField} updated to ${dbStatus} successfully` });
   } catch (error) {
     console.error("Error updating seller status:", error);
     return res.status(500).json({ success: false, message: "Failed to update status", error: error.message });
@@ -933,6 +970,18 @@ exports.approveSeller = async (req, res) => {
 
     await sendNotification(id, `Congratulations! Your Seller Merchant account and all KYC documents have been fully verified and approved.`);
 
+    if (req.user) {
+      recordAgentAuditLog({
+        agentId: req.user.id,
+        agentName: req.user.name || (req.user.role === 'admin' ? 'Admin' : 'Agent'),
+        action: 'APPROVE_SELLER',
+        targetType: 'seller',
+        targetId: id,
+        details: { sellerBusiness: existingSeller[0].business_name || existingSeller[0].name },
+        ipAddress: req.ip
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: 'Seller approved successfully'
@@ -966,6 +1015,18 @@ exports.rejectSeller = async (req, res) => {
     `, [reason || 'KYC Document verification criteria not met', id]);
 
     await sendNotification(id, `Your Seller verification was rejected. Reason: ${reason || 'Document verification criteria not met'}`);
+
+    if (req.user) {
+      recordAgentAuditLog({
+        agentId: req.user.id,
+        agentName: req.user.name || (req.user.role === 'admin' ? 'Admin' : 'Agent'),
+        action: 'REJECT_SELLER',
+        targetType: 'seller',
+        targetId: id,
+        details: { sellerBusiness: existingSeller[0].business_name || existingSeller[0].name, reason },
+        ipAddress: req.ip
+      });
+    }
 
     return res.status(200).json({
       success: true,
