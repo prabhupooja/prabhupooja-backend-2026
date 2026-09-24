@@ -729,6 +729,48 @@ async function runMigrations() {
       console.warn("Note on agent table migration:", agentSchemaErr.message);
     }
 
+    // 14. Create sankalp_enquiries & sankalp_bookings tables for Vedic Sankalp & Anushthan
+    try {
+      const createSankalpEnquiriesTable = `
+        CREATE TABLE IF NOT EXISTS sankalp_enquiries (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          phone VARCHAR(20) NOT NULL,
+          city_state VARCHAR(255) DEFAULT NULL,
+          topic VARCHAR(255) DEFAULT NULL,
+          message TEXT DEFAULT NULL,
+          status ENUM('Pending', 'In-Progress', 'Completed') DEFAULT 'Pending',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_sankalp_phone (phone),
+          INDEX idx_sankalp_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+      await db.query(createSankalpEnquiriesTable);
+
+      const createSankalpBookingsTable = `
+        CREATE TABLE IF NOT EXISTS sankalp_bookings (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          reference_id VARCHAR(50) UNIQUE NOT NULL,
+          host_name VARCHAR(255) NOT NULL,
+          father_husband_name VARCHAR(255) DEFAULT NULL,
+          gotra VARCHAR(100) DEFAULT NULL,
+          whatsapp_number VARCHAR(20) NOT NULL,
+          location_city_state VARCHAR(255) DEFAULT NULL,
+          ritual_name VARCHAR(255) NOT NULL,
+          special_wish TEXT DEFAULT NULL,
+          status ENUM('Pending', 'Verified', 'Completed', 'Cancelled') DEFAULT 'Pending',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_booking_ref (reference_id),
+          INDEX idx_booking_whatsapp (whatsapp_number),
+          INDEX idx_booking_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+      await db.query(createSankalpBookingsTable);
+      console.log("✅ Tables 'sankalp_enquiries' & 'sankalp_bookings' verified/created successfully.");
+    } catch (sankalpErr) {
+      console.warn("Note on sankalp tables migration:", sankalpErr.message);
+    }
+
     console.log("=== MIGRATIONS COMPLETE ===");
     return true;
   } catch (err) {

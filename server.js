@@ -130,6 +130,7 @@ app.use("/api/v1/pushNotificatin", require('./Routes/mobilePushNotification'));
 app.use("/api/v1/rudraAbhishek",require('./Routes/rudraAbhishekRoutes'));
 app.use("/api/v1/events", require('./Routes/eventRoutes'));
 app.use("/api/v1/settings", require('./Routes/settingRoutes'));
+app.use("/api/v1/sankalp", require('./Routes/sankalpRoutes'));
 
 // Unprefixed route aliases for direct endpoints
 app.use("/users", require("./Routes/customerRoutes"));
