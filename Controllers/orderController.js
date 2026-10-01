@@ -389,6 +389,42 @@ exports.create = async (req, res) => {
     const rawDelivery = req.body.delivery_charge !== undefined ? req.body.delivery_charge : req.body.deliveryCharge;
     const orderDeliveryCharge = (rawDelivery !== undefined && rawDelivery !== null && rawDelivery !== '') ? parseFloat(rawDelivery) : 0.00;
 
+    let finalOrderStatus = status || "pending";
+
+    // Handle WALLET Payment Deduction & Validation
+    const isWalletPayment = String(paymentMethod || "").trim().toUpperCase() === "WALLET";
+    if (isWalletPayment) {
+      const [uRows] = await db.query("SELECT balance FROM users WHERE id = ?", [userId]);
+      if (!uRows || uRows.length === 0) {
+        return res.status(404).json({ success: false, message: "User account not found." });
+      }
+      const currentWalletBalance = parseFloat(uRows[0].balance || 0);
+      const payableTotal = parseFloat(totalPrice || 0);
+
+      if (currentWalletBalance < payableTotal) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient wallet balance (Available: ₹${currentWalletBalance}, Required: ₹${payableTotal}). Please recharge your wallet.`,
+        });
+      }
+
+      // Deduct balance from user wallet
+      const updatedBalance = parseFloat((currentWalletBalance - payableTotal).toFixed(2));
+      await db.query("UPDATE users SET balance = ? WHERE id = ?", [updatedBalance, userId]);
+
+      // Record wallet transaction history
+      try {
+        await db.query(
+          `INSERT INTO wallet_transactions (user_id, amount, type, purpose, balance_after, status, created_at) VALUES (?, ?, 'debit', 'Order Purchase', ?, 'success', NOW())`,
+          [userId, payableTotal, updatedBalance]
+        );
+      } catch (wErr) {
+        // Safe fallback if wallet_transactions table schema differs
+      }
+      
+      finalOrderStatus = "paid";
+    }
+
     const [result] = await db.query(
       `INSERT INTO orders (productId, userId, quantity, totalPrice, delivery_charge, createdAt, booking, images, paymentMethod, status, merchantId, shipping_address, payment_id)
        VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
@@ -401,8 +437,12 @@ exports.create = async (req, res) => {
         booking,
         JSON.stringify(imagesArray),
         paymentMethod,
-        status,
+        finalOrderStatus,
         JSON.stringify(merchantArray),
+        JSON.stringify(shippingAddress),
+        paymentId,
+      ]
+    );
         JSON.stringify(shippingAddress),
         paymentId,
       ]
