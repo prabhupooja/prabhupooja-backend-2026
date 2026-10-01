@@ -12,17 +12,163 @@ dotenv.config();
 
 const jwt_secret_key = process.env.JWT_SECRET_KEY;
 
-exports.register = async (req, res) => {
+exports.sendRegistrationOtp = async (req, res) => {
   try {
-    const { name, lastname, mobile, email, role } = req.body;
-    const image = req.file ? req.file.location : null;
-    const uuid = uuidv4();
-    if (!name || !mobile || !email || !role) {
-      return res.status(400).send({
+    const { email, name } = req.body;
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({
         success: false,
-        message: "Please provide all details",
+        message: "Email address is required.",
       });
     }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address.",
+      });
+    }
+
+    // Check if email already registered in users or pandit
+    const [existing] = await db.query(
+      `SELECT email FROM users WHERE email = ? UNION ALL SELECT email FROM pandit WHERE email = ?`,
+      [cleanEmail, cleanEmail]
+    );
+
+    if (existing && existing.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: "This email is already registered. Please login directly.",
+      });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes validity
+
+    await db.query(
+      `INSERT INTO email_otp_verifications (email, otp, expires_at, created_at) VALUES (?, ?, ?, NOW())`,
+      [cleanEmail, otp, expiresAt]
+    );
+
+    console.log(`\n========================================\n🔑 REGISTRATION EMAIL OTP FOR [${cleanEmail}]: ${otp}\n========================================\n`);
+
+    if (process.env.email && process.env.pass) {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user: process.env.email, pass: process.env.pass },
+      });
+
+      const mailOptions = {
+        from: process.env.email,
+        to: cleanEmail,
+        subject: "Email Verification OTP - Prabhu Pooja",
+        html: `<html>
+  <body style="font-family: Arial, sans-serif; background: #ffffff; margin: 0; padding: 20px; text-align: center;">
+    <div style="max-width: 600px; margin: auto; border: 1px solid #ffe0b2; border-radius: 12px; padding: 24px; background: #fffbf5;">
+      <img src="https://prabhupooja.s3.ap-south-1.amazonaws.com/onlinePooja/prabhupooja-logo.png" alt="Prabhu Pooja" height="40" style="margin-bottom: 20px;">
+      <h2 style="color: #bf360c; margin-top: 0;">Verify Your Email Address</h2>
+      <p style="color: #333; font-size: 15px;">Hello ${name ? `<b>${name}</b>` : "Devotee"},</p>
+      <p style="color: #555;">Thank you for registering with Prabhu Pooja. Your One-Time Password (OTP) for email verification is:</p>
+      <div style="font-size: 32px; font-weight: bold; color: #e65100; letter-spacing: 5px; background: #ffe0b2; padding: 12px 24px; border-radius: 8px; display: inline-block; margin: 15px 0;">${otp}</div>
+      <p style="font-size: 13px; color: #777;">This OTP is valid for <b>5 minutes</b>. Please enter this OTP in the registration form to verify your email.</p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+      <p style="font-size: 12px; color: #999;">© 2026 Prabhu Pooja. All rights reserved.</p>
+    </div>
+  </body>
+</html>`,
+      };
+
+      transporter.sendMail(mailOptions, (err, info) => {
+        if (err) {
+          console.warn("⚠️ Error sending registration OTP email:", err.message);
+        } else {
+          console.log("✅ Registration OTP email sent to:", cleanEmail);
+        }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Verification OTP sent successfully to ${cleanEmail}`,
+      otp: process.env.NODE_ENV === "development" ? otp : undefined,
+    });
+  } catch (err) {
+    console.error("Error in sendRegistrationOtp:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+};
+
+exports.verifyRegistrationOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and OTP are required.",
+      });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanOtp = String(otp).trim();
+
+    const [rows] = await db.query(
+      `SELECT * FROM email_otp_verifications 
+       WHERE email = ? AND otp = ? AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY id DESC LIMIT 1`,
+      [cleanEmail, cleanOtp]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired OTP. Please request a new OTP.",
+      });
+    }
+
+    await db.query(
+      `UPDATE email_otp_verifications SET is_verified = 1 WHERE id = ?`,
+      [rows[0].id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Email verified successfully.",
+    });
+  } catch (err) {
+    console.error("Error in verifyRegistrationOtp:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
+  }
+};
+
+exports.register = async (req, res) => {
+  try {
+    const { name, lastname, mobile, email, role, otp } = req.body;
+    const image = req.file ? req.file.location : null;
+    const uuid = uuidv4();
+
+    // 1. Validate mandatory fields
+    if (!name || !mobile || !email || role === undefined || role === null || role === "") {
+      return res.status(400).send({
+        success: false,
+        message: "Name, mobile, email, and role are all required.",
+      });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) {
+      return res.status(400).send({
+        success: false,
+        message: "Please provide a valid email address.",
+      });
+    }
+
     const cleanMobile = String(mobile || "").replace(/\D/g, "").slice(-10);
     if (!cleanMobile || cleanMobile.length !== 10 || !/^[6-9]\d{9}$/.test(cleanMobile)) {
       return res.status(400).send({
@@ -30,33 +176,76 @@ exports.register = async (req, res) => {
         message: "Please provide a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.",
       });
     }
+
+    // 2. Validate OTP
+    if (!otp || !String(otp).trim()) {
+      return res.status(400).send({
+        success: false,
+        message: "Please enter the OTP sent to your email to complete registration.",
+      });
+    }
+
+    const cleanOtp = String(otp).trim();
+    const [otpRows] = await db.query(
+      `SELECT * FROM email_otp_verifications 
+       WHERE email = ? AND otp = ? AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY id DESC LIMIT 1`,
+      [cleanEmail, cleanOtp]
+    );
+
+    if (!otpRows || otpRows.length === 0) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid or expired OTP. Please click 'Verify Email' to receive a new OTP.",
+      });
+    }
+
+    // Mark OTP record as verified
+    await db.query(
+      `UPDATE email_otp_verifications SET is_verified = 1 WHERE id = ?`,
+      [otpRows[0].id]
+    );
+
+    // 3. Check for existing user / pandit
     const [existingUser] = await db.query(
       `SELECT mobile, email FROM users WHERE mobile = ? OR email = ? 
        UNION ALL 
        SELECT mobile, email FROM pandit WHERE mobile = ? OR email = ?`,
-      [cleanMobile, email, cleanMobile, email]
+      [cleanMobile, cleanEmail, cleanMobile, cleanEmail]
     );
 
     if (existingUser && existingUser.length > 0) {
       return res.status(409).send({
         success: false,
-        message: "You already have an account with this number or email",
+        message: "An account already exists with this mobile number or email. Please login directly.",
       });
     }
+
     let data;
-    if (role === "1") {
+    let userId;
+    let token;
+
+    if (String(role) === "1") {
+      // Pandit registration
       [data] = await db.query(
-        `INSERT INTO pandit (name, lastname, mobile, email, role,uuid) VALUES (?, ?, ?, ?, ?,?)`,
-        [name, lastname, cleanMobile, email, role, uuid]
+        `INSERT INTO pandit (name, lastname, mobile, email, role, uuid) VALUES (?, ?, ?, ?, ?, ?)`,
+        [name, lastname || "", cleanMobile, cleanEmail, role, uuid]
       );
 
-      const panditId = data.insertId;
+      userId = data.insertId;
+      token = generateToken(userId);
+
+      await db.query(
+        `UPDATE pandit SET token = ? WHERE id = ?`,
+        [token, userId]
+      );
+
       await db.query(
         `INSERT INTO pandit_status (pandit_id, status, chat_mode) VALUES (?, ?, ?)`,
-        [panditId, 0, 0]
+        [userId, 0, 0]
       );
 
-      if (panditId) {
+      if (process.env.email && process.env.pass) {
         const transporter = nodemailer.createTransport({
           service: "Gmail",
           auth: {
@@ -72,25 +261,27 @@ exports.register = async (req, res) => {
   <p>Dear Admin,</p>
   <p>A new Pandit <strong>${name}</strong> has registered on Prabhu Pooja.</p>
   <p>Please review and verify the profile in the admin panel.</p>
-  <p>email - ${email}</p>
-  <p>number - ${mobile}</p>
+  <p>email - ${cleanEmail}</p>
+  <p>number - ${cleanMobile}</p>
   <p>🙏 Regards,<br/>Prabhu Pooja System</p>`,
         };
-        transporter.sendMail(mailOptions, (error, info) => {
-          if (error) {
-            console.error("Error sending email:", error);
-          } else {
-            console.log("Email sent: " + info.response);
-          }
-        });
+        transporter.sendMail(mailOptions, () => {});
       }
-    } else if (role === "0") {
+    } else if (String(role) === "0") {
+      // Devotee / User registration
       [data] = await db.query(
-        `INSERT INTO users (name,lastname, mobile, email, role, image,uuid,created_at) VALUES (?,?, ?, ?, ?, ?,?,NOW())`,
-        [name, lastname, cleanMobile, email, role, image, uuid]
+        `INSERT INTO users (name, lastname, mobile, email, role, image, uuid, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [name, lastname || "", cleanMobile, cleanEmail, role, image, uuid]
       );
 
-      const userId = data.insertId;
+      userId = data.insertId;
+      token = generateToken(userId);
+
+      await db.query(
+        `UPDATE users SET token = ? WHERE id = ?`,
+        [token, userId]
+      );
+
       await db.query(
         `INSERT INTO user_status (user_id, status, chat_mode) VALUES (?, ?, ?)`,
         [userId, 0, 0]
@@ -98,169 +289,83 @@ exports.register = async (req, res) => {
     } else {
       return res.status(400).send({
         success: false,
-        message: "Invalid role specified",
+        message: "Invalid role specified. Use '0' for User or '1' for Pandit.",
       });
     }
-    if (!data || !data.insertId) {
+
+    if (!userId) {
       return res.status(500).send({
         success: false,
-        message: "Error in insert query",
+        message: "Failed to create account.",
       });
     }
-    const transporter = nodemailer.createTransport({
-      service: "Gmail",
-      auth: {
-        user: process.env.email,
-        pass: process.env.pass,
-      },
-    });
-    const mailOptions = {
-      from: process.env.email,
-      to: email,
-      subject: "Registration Successful",
-      html: `
+
+    // Send Welcome Email
+    if (process.env.email && process.env.pass) {
+      const transporter = nodemailer.createTransport({
+        service: "Gmail",
+        auth: {
+          user: process.env.email,
+          pass: process.env.pass,
+        },
+      });
+      const mailOptions = {
+        from: process.env.email,
+        to: cleanEmail,
+        subject: "Registration Successful - Prabhu Pooja",
+        html: `
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <title>Prabhu Pooja - Registration Successful</title>
-    <style>
-      /* Main Email Container */
-      .mail-container {
-        width: 100%;
-        max-width: 600px;
-        margin: auto;
-        background: linear-gradient(135deg, #ffb300, #ff7043);
-        padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-        animation: fadeIn 1.5s ease-in-out;
-      }
-
-      /* Header */
-      .mail-header {
-        padding-bottom: 20px;
-      }
-
-      .mail-header img {
-        height: 60px;
-        animation: slideDown 1.2s ease-in-out;
-      }
-
-      /* Content */
-      .mail-content {
-        background: #fff3e0;
-        padding: 25px;
-        border-radius: 10px;
-        text-align: center;
-        animation: fadeInUp 1.5s ease-in-out;
-      }
-
-      /* Button */
-      .mail-btn {
-        display: inline-block;
-        padding: 14px 28px;
-        background: linear-gradient(45deg, #d84315, #ff6f00);
-        color: white;
-        text-decoration: none;
-        border-radius: 8px;
-        font-weight: bold;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        transition: transform 0.3s ease-in-out;
-      }
-
-      .mail-btn:hover {
-        background: linear-gradient(45deg, #ff6f00, #d84315);
-        transform: scale(1.1);
-      }
-
-      /* Footer */
-      .mail-footer {
-        text-align: center;
-        font-size: 14px;
-        color: #4e342e;
-        margin-top: 25px;
-        animation: fadeIn 2s ease-in-out;
-      }
-
-      .mail-footer a {
-        color: #bf360c;
-        text-decoration: none;
-        font-weight: bold;
-      }
-
-      /* Animations */
-      @keyframes fadeIn {
-        from {
-          opacity: 0;
-        }
-        to {
-          opacity: 1;
-        }
-      }
-
-      @keyframes fadeInUp {
-        from {
-          opacity: 0;
-          transform: translateY(20px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-
-      @keyframes slideDown {
-        from {
-          opacity: 0;
-          transform: translateY(-20px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-    </style>
   </head>
-  <body>
-    <div class="mail-container">
-      <div class="mail-header">
-        <img src="https://prabhupooja.s3.ap-south-1.amazonaws.com/onlinePooja/prabhupooja-logo.png" alt="Prabhu Pooja">
+  <body style="margin: 0; padding: 20px; font-family: Arial, sans-serif; background: #fffdf9;">
+    <div style="max-width: 600px; margin: auto; background: linear-gradient(135deg, #ffb300, #ff7043); padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 5px 15px rgba(0,0,0,0.2);">
+      <div style="padding-bottom: 15px;">
+        <img src="https://prabhupooja.s3.ap-south-1.amazonaws.com/onlinePooja/prabhupooja-logo.png" alt="Prabhu Pooja" height="50">
       </div>
-      <div class="mail-content">
-        <h2 style="color: #bf360c;">🌟 Welcome ${name}! 🌟</h2>
-        <p style="color: #4e342e;">Thank you for registering with Prabhu Pooja.</p>
+      <div style="background: #fff3e0; padding: 25px; border-radius: 10px; text-align: center;">
+        <h2 style="color: #bf360c; margin-top: 0;">🌟 Welcome ${name}! 🌟</h2>
+        <p style="color: #4e342e; font-size: 15px;">Thank you for registering with Prabhu Pooja.</p>
         <p style="color: #5d4037;">🌿 Experience authentic Hindu rituals and poojas from the comfort of your home.</p>
         <p style="color: #6d4c41;">📜 Book your personalized pooja services now and receive divine blessings.</p>
-        <p style="text-align: center;"><a href="https://www.prabhupooja.com/onlinepooja" class="mail-btn">📅 Book a Pooja Now</a></p>
-        <p style="text-align: center; font-weight: bold; color: #bf360c;">🙏 Thank you, ${name}, for registering with Prabhu Pooja! We appreciate your trust in our services. May you receive divine blessings! 🌸</p>
+        <div style="margin: 25px 0;">
+          <a href="https://www.prabhupooja.com/onlinepooja" style="display: inline-block; padding: 12px 28px; background: linear-gradient(45deg, #d84315, #ff6f00); color: white; text-decoration: none; border-radius: 8px; font-weight: bold;">📅 Explore Poojas</a>
+        </div>
+        <p style="color: #bf360c; font-weight: bold; font-size: 13px;">🙏 May you and your family receive abundant divine blessings! 🌸</p>
       </div>
-      <div class="mail-footer">
-        <p>&copy; 2025 Prabhu Pooja. All Rights Reserved.</p>
-        <p><a href="https://www.prabhupooja.com">Unsubscribe</a></p>
+      <div style="text-align: center; font-size: 12px; color: #4e342e; margin-top: 15px;">
+        <p>© 2026 Prabhu Pooja. All Rights Reserved.</p>
       </div>
     </div>
   </body>
 </html>`,
-    };
-    transporter.sendMail(mailOptions, (error, info) => {
-      if (error) {
-        console.error("Error sending email:", error);
-      } else {
-        console.log("Email sent: " + info.response);
-      }
-    });
+      };
+      transporter.sendMail(mailOptions, () => {});
+    }
 
     return res.status(201).send({
       success: true,
-      message: "User created successfully",
+      message: "Registration successful! You are now logged in.",
+      token: token,
+      auth: token,
+      userType: String(role) === "1" ? "pandit" : "user",
+      user: {
+        id: userId,
+        name: name,
+        lastname: lastname || "",
+        mobile: cleanMobile,
+        email: cleanEmail,
+        role: role,
+        token: token,
+      },
     });
   } catch (error) {
     console.error("Error in register function:", error);
     return res.status(500).send({
       success: false,
-      message: "Error in creating user",
+      message: "Error creating user account",
       error: error.message,
     });
   }

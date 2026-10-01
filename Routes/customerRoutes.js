@@ -58,6 +58,10 @@ const userImageUpload = upload.fields([
   { name: "file", maxCount: 1 },
 ]);
 
+router.post("/sendRegistrationOtp", userController.sendRegistrationOtp);
+router.post("/send-registration-otp", userController.sendRegistrationOtp);
+router.post("/verifyRegistrationOtp", userController.verifyRegistrationOtp);
+router.post("/verify-registration-otp", userController.verifyRegistrationOtp);
 router.post("/register", upload.single("image"), userController.register);
 router.get("/getAll", AdminverifyToken, userController.getUser);
 router.get("/getuserbyid/:id", userController.getUserByid);

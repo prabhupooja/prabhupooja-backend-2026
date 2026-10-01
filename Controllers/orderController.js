@@ -579,7 +579,7 @@ exports.create = async (req, res) => {
             pass: process.env.pass,
           },
         });
-        if (paymentMethod.toLowarCase() === "upi") {
+        if (paymentMethod && paymentMethod.toLowerCase() === "upi") {
           const mailOptions = {
             from: process.env.email,
             to: user[0].email,
@@ -1974,6 +1974,47 @@ exports.statusUpdate = async (req, res) => {
 
         await sendNotificationToUser(notifTitle, notifBody, currentOrder.userId);
         await sendUserNotification(currentOrder.userId, notifTitle, notifBody);
+
+        // Send Email Update to Customer
+        if (process.env.email && process.env.pass) {
+          try {
+            const [custUser] = await db.query("SELECT name, email FROM users WHERE id = ?", [currentOrder.userId]);
+            if (custUser && custUser[0]?.email) {
+              const transporter = nodemailer.createTransport({
+                service: "gmail",
+                auth: { user: process.env.email, pass: process.env.pass },
+              });
+
+              const mailOptions = {
+                from: process.env.email,
+                to: custUser[0].email,
+                subject: `${notifTitle} - Order #${orderId} | Prabhu Pooja`,
+                html: `<html>
+  <body style="font-family: Arial, sans-serif; background: #fffdf9; margin: 0; padding: 20px;">
+    <div style="max-width: 600px; margin: auto; background: #fff; border: 1px solid #ffe0b2; border-radius: 12px; padding: 24px;">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <img src="https://prabhupooja.s3.ap-south-1.amazonaws.com/onlinePooja/prabhupooja-logo.png" alt="Prabhu Pooja" height="40" />
+      </div>
+      <h2 style="color: #bf360c; margin-top: 0;">${notifTitle}</h2>
+      <p style="color: #333; font-size: 15px;">Hello <b>${custUser[0].name || "Devotee"}</b>,</p>
+      <p style="color: #555; font-size: 14px; line-height: 1.6;">${notifBody}</p>
+      ${finalCourier && finalTrackingNum ? `
+      <div style="background: #fff8e1; border-radius: 8px; padding: 15px; margin: 20px 0;">
+        <p style="margin: 0 0 8px 0; color: #e65100; font-weight: bold;">Courier Partner: ${finalCourier}</p>
+        <p style="margin: 0; color: #333;">Tracking / AWB Number: <b>${finalTrackingNum}</b></p>
+      </div>` : ''}
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+      <p style="font-size: 12px; color: #999; text-align: center;">© 2026 Prabhu Pooja. All rights reserved.</p>
+    </div>
+  </body>
+</html>`,
+              };
+              transporter.sendMail(mailOptions, () => {});
+            }
+          } catch (eErr) {
+            console.warn("Order status email notice:", eErr.message);
+          }
+        }
       }
     } catch (nErr) {
       console.warn("Notification notice:", nErr.message);

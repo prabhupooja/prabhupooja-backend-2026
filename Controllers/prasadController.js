@@ -821,6 +821,35 @@ exports.statusUpdate = async (req, res) => {
     // Update the status
     await db.query(`UPDATE prasad_booking SET status = ? WHERE id = ?`, [status, id]);
 
+    // Send email notification to user on status update
+    try {
+      if (existingStatus[0].userid && process.env.email && process.env.pass) {
+        const [userRows] = await db.query('SELECT name, email FROM users WHERE id = ?', [existingStatus[0].userid]);
+        if (userRows.length > 0 && userRows[0].email) {
+          const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: { user: process.env.email, pass: process.env.pass }
+          });
+          const mailOptions = {
+            from: process.env.email,
+            to: userRows[0].email,
+            subject: `Prasad Order Status: ${status} - Prabhu Pooja`,
+            html: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ffe0b2; border-radius: 10px;">
+              <h2 style="color: #bf360c;">Prasad Order Status Update</h2>
+              <p>Dear <b>${userRows[0].name || "Devotee"}</b>,</p>
+              <p>Your holy Mandir Prasad booking (Order #${id}) status has been updated to: <strong style="color: #e65100;">${status}</strong>.</p>
+              <p>May you receive divine blessings and prasad safely.</p>
+              <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+              <p style="font-size: 12px; color: #888;">© 2026 Prabhu Pooja. All rights reserved.</p>
+            </div>`
+          };
+          transporter.sendMail(mailOptions, () => {});
+        }
+      }
+    } catch (mErr) {
+      console.warn("Prasad status mail warning:", mErr.message);
+    }
+
     return res.status(200).send({
       success: true,
       message: "Status updated successfully",
