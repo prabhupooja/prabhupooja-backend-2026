@@ -771,6 +771,27 @@ async function runMigrations() {
       console.warn("Note on sankalp tables migration:", sankalpErr.message);
     }
 
+    // 15. Create email_otp_verifications table for Email Verification & Registration
+    try {
+      const createEmailOtpTable = `
+        CREATE TABLE IF NOT EXISTS email_otp_verifications (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          email VARCHAR(255) NOT NULL,
+          otp VARCHAR(10) NOT NULL,
+          is_verified TINYINT(1) DEFAULT 0,
+          expires_at DATETIME DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_email (email),
+          INDEX idx_otp (otp),
+          INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+      await db.query(createEmailOtpTable);
+      console.log("✅ Table 'email_otp_verifications' verified/created successfully.");
+    } catch (otpErr) {
+      console.warn("Note on email_otp_verifications table migration:", otpErr.message);
+    }
+
     console.log("=== MIGRATIONS COMPLETE ===");
     return true;
   } catch (err) {
