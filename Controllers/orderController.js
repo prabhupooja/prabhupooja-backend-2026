@@ -443,10 +443,6 @@ exports.create = async (req, res) => {
         paymentId,
       ]
     );
-        JSON.stringify(shippingAddress),
-        paymentId,
-      ]
-    );
 
     let productRows = [];
 
