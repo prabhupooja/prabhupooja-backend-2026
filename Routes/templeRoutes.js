@@ -1,33 +1,11 @@
 const express = require("express");
 const router = express.Router();
-const multer = require("multer")
-const multerS3 = require("multer-s3");
-const { S3Client } = require("@aws-sdk/client-s3");
-
 const templeController = require('../Controllers/templeControler');
 const { AdminverifyToken } = require("../config/admintoken");
 const { verifyToken } = require("../config/genratetokenConfig");
+const { createCloudinaryUpload } = require("../config/cloudinary");
 
-const s3 = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-  }
-});
-
-
-const upload = multer({
-  storage: multerS3({
-    s3: s3,
-    bucket: process.env.S3_BUCKET_NAME,
-    contentType: multerS3.AUTO_CONTENT_TYPE,
-    key: function (req, file, cb) {
-      const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-      cb(null, `temple/${Date.now().toString()}-${sanitizedName}`);
-    },
-  })
-});
+const upload = createCloudinaryUpload("temple");
 
 const templeUpload = upload.fields([
   { name: 'image', maxCount: 1 },

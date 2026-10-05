@@ -1,57 +1,11 @@
 const express = require("express");
-const multer = require("multer");
-const multerS3 = require("multer-s3");
-const { S3Client } = require("@aws-sdk/client-s3");
 const panditController = require("../Controllers/panditController");
 const { verifyToken } = require("../config/genratetokenConfig");
 const { AdminOrAgentVerifyToken } = require("../config/adminOrAgentToken");
 const { AdminverifyToken } = require("../config/admintoken");
+const { createCloudinaryUpload } = require("../config/cloudinary");
 
-console.log("here are the cred", process.env.AWS_REGION)
-
-const s3 = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-  }
-});
-
-let upload;
-
-if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.S3_BUCKET_NAME) {
-  try {
-    upload = multer({
-      storage: multerS3({
-        s3: s3,
-        bucket: process.env.S3_BUCKET_NAME,
-        contentType: multerS3.AUTO_CONTENT_TYPE,
-        key: function (req, file, cb) {
-          cb(null, `panditDocs/${Date.now().toString()}-${file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`);
-        },
-      }),
-    });
-  } catch (err) {
-    console.warn("Multer S3 fallback in panditRoutes:", err.message);
-  }
-}
-
-if (!upload) {
-  const path = require("path");
-  const fs = require("fs");
-  const uploadDir = path.join(__dirname, "../uploads");
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-      cb(null, "pandit-" + uniqueSuffix + path.extname(file.originalname));
-    }
-  });
-  upload = multer({ storage });
-}
+const upload = createCloudinaryUpload("panditDocs");
 
 const panditDocUpload = upload.fields([
   { name: 'gurukulCertificate', maxCount: 1 },

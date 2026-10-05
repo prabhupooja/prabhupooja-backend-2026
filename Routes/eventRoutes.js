@@ -1,59 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const eventController = require('../Controllers/eventController');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const { createCloudinaryUpload } = require('../config/cloudinary');
 
-// Configure upload storage (Supports S3 if credentials exist, falls back to disk storage safely)
-let upload;
-
-if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.S3_BUCKET_NAME) {
-    try {
-        const multerS3 = require('multer-s3');
-        const { S3Client } = require('@aws-sdk/client-s3');
-        const s3 = new S3Client({
-            region: process.env.AWS_REGION || 'ap-south-1',
-            credentials: {
-                accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-            },
-        });
-        upload = multer({
-            storage: multerS3({
-                s3: s3,
-                bucket: process.env.S3_BUCKET_NAME,
-                contentType: multerS3.AUTO_CONTENT_TYPE,
-                key: function (req, file, cb) {
-                    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-                    cb(null, `events/${uniqueSuffix}${path.extname(file.originalname)}`);
-                }
-            })
-        });
-    } catch (e) {
-        console.warn('S3 Multer initialization failed, falling back to local disk storage:', e.message);
-    }
-}
-
-if (!upload) {
-    const uploadDir = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-    }
-
-    const storage = multer.diskStorage({
-        destination: (req, file, cb) => {
-            cb(null, uploadDir);
-        },
-        filename: (req, file, cb) => {
-            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-            cb(null, 'event-' + uniqueSuffix + path.extname(file.originalname));
-        }
-    });
-    upload = multer({ storage: storage });
-}
-
-// Support single & multiple file uploads under any field names (image, banner, photo, gallery, file, etc.)
+const upload = createCloudinaryUpload('events');
 const uploadMiddleware = upload.any();
 
 // --- EVENT ROUTES ---

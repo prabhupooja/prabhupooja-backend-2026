@@ -1,55 +1,12 @@
 const express = require("express");
-const multerS3 = require("multer-s3");
-const multer = require('multer');
-const s3 = require("../config/s3Config");
-
-const userController = require("../Controllers/customerController")
-
-const {verifyToken,generateToken } = require('../config/genratetokenConfig');
+const userController = require("../Controllers/customerController");
+const { verifyToken, generateToken } = require('../config/genratetokenConfig');
 const { AdminverifyToken } = require("../config/admintoken");
-
+const { createCloudinaryUpload } = require("../config/cloudinary");
 const passport = require('passport');
 
-
-const router = express.Router()
-
-
-
-let upload;
-
-if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.S3_BUCKET_NAME) {
-  try {
-    upload = multer({
-      storage: multerS3({
-        s3: s3,
-        bucket: process.env.S3_BUCKET_NAME,
-        contentType: multerS3.AUTO_CONTENT_TYPE,
-        key: function (req, file, cb) {
-          cb(null, `users/${Date.now().toString()}-${file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`);
-        },
-      }),
-    });
-  } catch (err) {
-    console.warn("Multer S3 init fallback:", err.message);
-  }
-}
-
-if (!upload) {
-  const path = require("path");
-  const fs = require("fs");
-  const uploadDir = path.join(__dirname, "../uploads");
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-      cb(null, "user-" + uniqueSuffix + path.extname(file.originalname));
-    }
-  });
-  upload = multer({ storage });
-}
+const router = express.Router();
+const upload = createCloudinaryUpload("users");
 
 // Support multiple image field names (profileImage, image, file)
 const userImageUpload = upload.fields([
