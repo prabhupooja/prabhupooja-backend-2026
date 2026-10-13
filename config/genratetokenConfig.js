@@ -37,3 +37,17 @@ jwt.verify(tokenValue,  JWT_KEY= jwt_secret_key, (err,decoded)=>{
 })
 
 };
+
+exports.optionalVerifyToken = (req, res, next) => {
+  const token = req.headers.authorization;
+  if (!token) {
+    return next();
+  }
+  const tokenValue = token.startsWith('Bearer ') ? token.split(' ')[1] : token;
+  jwt.verify(tokenValue, jwt_secret_key, (err, decoded) => {
+    if (!err && decoded) {
+      req.user = { id: decoded.userId };
+    }
+    next();
+  });
+};

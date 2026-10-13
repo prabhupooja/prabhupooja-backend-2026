@@ -29,14 +29,28 @@ if (!loadedAny) {
   dotenv.config();
 }
 
+// Parse and sanitize PORT from environment
+const rawPort = process.env.PORT !== undefined ? String(process.env.PORT).trim() : "";
+const parsedPort = parseInt(rawPort, 10);
+const PORT = (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) ? parsedPort : 3002;
+const HOST = (process.env.HOST || "0.0.0.0").trim();
+
+// Keep process.env.PORT synchronized as a string for any third-party or internal module
+process.env.PORT = String(PORT);
+
+// Standardize BACKEND_URL dynamically based on PORT if not explicitly configured
+const rawBackendUrl = process.env.BACKEND_URL ? String(process.env.BACKEND_URL).trim() : "";
+const BACKEND_URL = rawBackendUrl || `http://localhost:${PORT}`;
+process.env.BACKEND_URL = BACKEND_URL;
+
 // Config object with safe fallbacks for both local and production
 const config = {
   NODE_ENV: process.env.NODE_ENV || "development",
-  PORT: parseInt(process.env.PORT, 10) || 3002,
-  HOST: process.env.HOST || "0.0.0.0",
+  PORT,
+  HOST,
 
   // URLs
-  BACKEND_URL: process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3002}`,
+  BACKEND_URL,
   FRONTEND_URL: process.env.FRONTEND_URL || "http://localhost:5173",
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(",").map((s) => s.trim())
@@ -62,6 +76,7 @@ const config = {
     callbackUrl: process.env.GOOGLE_CALLBACK_URL || `${process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3002}`}/auth/google/callback`,
     mobileClientId: process.env.GOOGLE_MOBILE_CLIENT_ID || "",
   },
+  GOOGLE_TRANSLATE_API_KEY: process.env.GOOGLE_TRANSLATE_API_KEY || "",
 
   // AWS S3
   AWS: {

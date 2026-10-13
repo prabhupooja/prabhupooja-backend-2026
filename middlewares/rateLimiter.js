@@ -73,9 +73,16 @@ const generalLimiter = createRateLimiter({
   message: "Rate limit exceeded. Please slow down your requests."
 });
 
+const translationLimiter = createRateLimiter({
+  windowMs: 1 * 60 * 1000,
+  max: 60,
+  message: "Translation request limit reached. Please try again shortly."
+});
+
 module.exports = {
   createRateLimiter,
   authLimiter,
   bookingLimiter,
-  generalLimiter
+  generalLimiter,
+  translationLimiter
 };

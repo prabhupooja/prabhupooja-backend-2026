@@ -1,22 +1,7 @@
 const db = require('../config/db');
 const { AgentGenerateToken } = require('../config/agentToken');
 const bcrypt = require('bcrypt');
-
-/**
- * Internal Audit Logger Helper
- */
-const recordAgentAuditLog = async ({ agentId, agentName, action, targetType, targetId, details, ipAddress }) => {
-  try {
-    const detailStr = typeof details === 'object' ? JSON.stringify(details) : (details || null);
-    await db.query(
-      `INSERT INTO agent_audit_logs (agent_id, agent_name, action, target_type, target_id, details, ip_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [agentId, agentName || null, action, targetType || null, targetId ? String(targetId) : null, detailStr, ipAddress || null]
-    );
-  } catch (err) {
-    console.error('Error recording agent audit log:', err.message);
-  }
-};
+const { recordAgentAuditLog } = require('../utils/auditLogger');
 exports.recordAgentAuditLog = recordAgentAuditLog;
 
 /**

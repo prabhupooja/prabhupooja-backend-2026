@@ -269,10 +269,17 @@ exports.register = async (req, res) => {
       }
     } else if (String(role) === "0") {
       // Devotee / User registration
-      [data] = await db.query(
-        `INSERT INTO users (name, lastname, mobile, email, role, image, uuid, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-        [name, lastname || "", cleanMobile, cleanEmail, role, image, uuid]
-      );
+      try {
+        [data] = await db.query(
+          `INSERT INTO users (name, lastname, mobile, email, role, image, uuid, created_at, email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
+          [name, lastname || "", cleanMobile, cleanEmail, role, image, uuid]
+        );
+      } catch (insertUserErr) {
+        [data] = await db.query(
+          `INSERT INTO users (name, lastname, mobile, email, role, image, uuid, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [name, lastname || "", cleanMobile, cleanEmail, role, image, uuid]
+        );
+      }
 
       userId = data.insertId;
       token = generateToken(userId);
@@ -438,6 +445,28 @@ const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_
 exports.login = async (req, res) => {
   try {
     const rawInput = req.body?.input || req.body?.mobile || req.body?.number || req.body?.phone || req.body?.email || req.body?.contact;
+    const rawUserType = req.body?.userType ?? req.body?.role;
+    const normalizedUserType =
+      rawUserType == null
+        ? null
+        : String(rawUserType).toLowerCase();
+    const requestedUserType =
+      normalizedUserType === "pandit" || normalizedUserType === "1"
+        ? "pandit"
+        : normalizedUserType === "user" ||
+          normalizedUserType === "customer" ||
+          normalizedUserType === "devotee" ||
+          normalizedUserType === "0"
+        ? "user"
+        : null;
+
+    if (rawUserType != null && !requestedUserType) {
+      return res.status(400).json({
+        success: false,
+        message: "Please select either devotee or pandit login.",
+      });
+    }
+
     const otp = generateOTP();
 
     if (!rawInput || !String(rawInput).trim()) {
@@ -465,23 +494,39 @@ exports.login = async (req, res) => {
         });
       }
 
-      // Check users table
-      const [usersResult] = await db.query(
-        `SELECT * FROM users WHERE email = ?`,
-        [input]
-      );
-      if (usersResult.length > 0) {
-        user = usersResult[0];
-        isPandit = false;
-      } else {
-        // Check pandit table
+      if (requestedUserType === "pandit") {
         const [panditResult] = await db.query(
-          `SELECT * FROM pandit WHERE email = ?`,
+          `SELECT * FROM pandit WHERE LOWER(email) = LOWER(?)`,
           [input]
         );
         if (panditResult.length > 0) {
           user = panditResult[0];
           isPandit = true;
+        }
+      } else if (requestedUserType === "user") {
+        const [usersResult] = await db.query(
+          `SELECT * FROM users WHERE LOWER(email) = LOWER(?)`,
+          [input]
+        );
+        if (usersResult.length > 0) {
+          user = usersResult[0];
+        }
+      } else {
+        const [usersResult] = await db.query(
+          `SELECT * FROM users WHERE LOWER(email) = LOWER(?)`,
+          [input]
+        );
+        if (usersResult.length > 0) {
+          user = usersResult[0];
+        } else {
+          const [panditResult] = await db.query(
+            `SELECT * FROM pandit WHERE LOWER(email) = LOWER(?)`,
+            [input]
+          );
+          if (panditResult.length > 0) {
+            user = panditResult[0];
+            isPandit = true;
+          }
         }
       }
 
@@ -514,23 +559,49 @@ exports.login = async (req, res) => {
 
       formattedMobile = `+91${clean10Digit}`;
 
-      // Check users table for mobile
-      const [usersResult] = await db.query(
-        `SELECT * FROM users WHERE mobile = ? OR mobile = ? OR mobile = ? OR mobile = ?`,
-        [clean10Digit, formattedMobile, input, digitsOnly]
-      );
-      if (usersResult.length > 0) {
-        user = usersResult[0];
-        isPandit = false;
-      } else {
-        // Check pandit table for mobile
+      const mobileQuery =
+        "SELECT * FROM ?? WHERE mobile = ? OR mobile = ? OR mobile = ? OR mobile = ?";
+      const mobileParams = (table) => [
+        table,
+        clean10Digit,
+        formattedMobile,
+        input,
+        digitsOnly,
+      ];
+
+      if (requestedUserType === "pandit") {
         const [panditResult] = await db.query(
-          `SELECT * FROM pandit WHERE mobile = ? OR mobile = ? OR mobile = ? OR mobile = ?`,
-          [clean10Digit, formattedMobile, input, digitsOnly]
+          mobileQuery,
+          mobileParams("pandit")
         );
         if (panditResult.length > 0) {
           user = panditResult[0];
           isPandit = true;
+        }
+      } else if (requestedUserType === "user") {
+        const [usersResult] = await db.query(
+          mobileQuery,
+          mobileParams("users")
+        );
+        if (usersResult.length > 0) {
+          user = usersResult[0];
+        }
+      } else {
+        const [usersResult] = await db.query(
+          mobileQuery,
+          mobileParams("users")
+        );
+        if (usersResult.length > 0) {
+          user = usersResult[0];
+        } else {
+          const [panditResult] = await db.query(
+            mobileQuery,
+            mobileParams("pandit")
+          );
+          if (panditResult.length > 0) {
+            user = panditResult[0];
+            isPandit = true;
+          }
         }
       }
 
@@ -545,11 +616,18 @@ exports.login = async (req, res) => {
     // Generate Token & Save OTP
     const token = generateToken(user.id);
     const targetTable = isPandit ? "pandit" : "users";
+    const otpChannel = isEmail ? "email" : "mobile";
+    const otpTarget = isEmail ? input.toLowerCase() : formattedMobile;
 
-    const [updateResult] = await db.query(
-      `UPDATE ${targetTable} SET token = ?, otp = ? WHERE id = ?`,
-      [token, otp, user.id]
-    );
+    const [updateResult] = isPandit
+      ? await db.query(
+          `UPDATE ${targetTable} SET token = ?, otp = ? WHERE id = ?`,
+          [token, otp, user.id]
+        )
+      : await db.query(
+          `UPDATE ${targetTable} SET token = ?, otp = ?, otp_channel = ?, otp_target = ? WHERE id = ?`,
+          [token, otp, otpChannel, otpTarget, user.id]
+        );
 
     if (updateResult.affectedRows === 0) {
       return res.status(500).json({
@@ -562,7 +640,7 @@ exports.login = async (req, res) => {
     setTimeout(async () => {
       try {
         await db.query(
-          `UPDATE ${targetTable} SET otp = NULL WHERE id = ? AND otp = ?`,
+          `UPDATE ${targetTable} SET otp = NULL${isPandit ? "" : ", otp_channel = NULL, otp_target = NULL"} WHERE id = ? AND otp = ?`,
           [user.id, otp]
         );
       } catch (expErr) {}
@@ -717,7 +795,27 @@ exports.AppGoogleLogin = async (req, res) => {
   }
 };
 exports.verifyOtp = async (req, res) => {
-  const { otp } = req.body;
+  const otp = req.body?.otp || req.body?.otpCode;
+  const otpInput = req.body?.input || req.body?.email || req.body?.mobile;
+  const rawUserType = req.body?.userType ?? req.body?.role;
+  const normalizedUserType =
+    rawUserType == null ? null : String(rawUserType).toLowerCase();
+  const requestedUserType =
+    normalizedUserType === "1" || normalizedUserType === "pandit"
+      ? "pandit"
+      : normalizedUserType === "0" ||
+        normalizedUserType === "user" ||
+        normalizedUserType === "devotee"
+      ? "user"
+      : null;
+
+  if (rawUserType != null && !requestedUserType) {
+    return res.status(400).json({
+      success: false,
+      message: "Please select either devotee or pandit login.",
+    });
+  }
+
   if (!otp || !String(otp).trim()) {
     return res.status(400).json({
       success: false,
@@ -726,16 +824,41 @@ exports.verifyOtp = async (req, res) => {
   }
 
   try {
-    let [usersData] = await db.query("SELECT * FROM users WHERE otp = ?", [
-      String(otp).trim(),
-    ]);
+    const normalizedOtpInput = otpInput
+      ? String(otpInput).trim().includes("@")
+        ? String(otpInput).trim().toLowerCase()
+        : `+91${String(otpInput).replace(/\D/g, "").slice(-10)}`
+      : null;
+    let usersData = [];
+    if (requestedUserType !== "pandit") {
+      [usersData] = normalizedOtpInput
+        ? await db.query(
+            "SELECT * FROM users WHERE otp = ? AND LOWER(otp_target) = LOWER(?)",
+            [String(otp).trim(), normalizedOtpInput]
+          )
+        : await db.query("SELECT * FROM users WHERE otp = ?", [
+            String(otp).trim(),
+          ]);
+    }
 
     if (usersData.length > 0) {
       const matchedUser = usersData[0];
-      // OTP verified, now set OTP to NULL in the database
-      await db.query("UPDATE users SET otp = NULL WHERE id = ?", [
-        matchedUser.id,
-      ]);
+      await db.query(
+        `UPDATE users
+         SET otp = NULL,
+             email_verified = IF(otp_channel = 'email', 1, email_verified),
+             mobile_verified = IF(otp_channel = 'mobile', 1, mobile_verified),
+             otp_channel = NULL,
+             otp_target = NULL
+         WHERE id = ?`,
+        [matchedUser.id]
+      );
+      const emailVerified =
+        Number(matchedUser.email_verified) === 1 ||
+        matchedUser.otp_channel === "email";
+      const mobileVerified =
+        Number(matchedUser.mobile_verified) === 1 ||
+        matchedUser.otp_channel === "mobile";
 
       return res.status(200).json({
         success: true,
@@ -749,18 +872,32 @@ exports.verifyOtp = async (req, res) => {
           lastname: matchedUser.lastname,
           mobile: matchedUser.mobile,
           email: matchedUser.email,
-          role: matchedUser.role
+          role: matchedUser.role,
+          email_verified: emailVerified ? 1 : 0,
+          mobile_verified: mobileVerified ? 1 : 0,
         }
       });
     }
 
-    let [panditsData] = await db.query("SELECT * FROM pandit WHERE otp = ?", [
-      String(otp).trim(),
-    ]);
+    const [panditsData] =
+      requestedUserType !== "user"
+        ? await db.query(
+            normalizedOtpInput
+              ? `SELECT * FROM pandit WHERE otp = ? AND (LOWER(email) = LOWER(?) OR mobile = ? OR mobile = ?)`
+              : "SELECT * FROM pandit WHERE otp = ?",
+            normalizedOtpInput
+              ? [
+                  String(otp).trim(),
+                  normalizedOtpInput,
+                  normalizedOtpInput.replace(/^\+91/, ""),
+                  normalizedOtpInput,
+                ]
+              : [String(otp).trim()]
+          )
+        : [[]];
 
     if (panditsData.length > 0) {
       const matchedPandit = panditsData[0];
-      // OTP verified, now set OTP to NULL in the database
       await db.query("UPDATE pandit SET otp = NULL WHERE id = ?", [
         matchedPandit.id,
       ]);
@@ -782,7 +919,10 @@ exports.verifyOtp = async (req, res) => {
           lastname: matchedPandit.lastname,
           mobile: matchedPandit.mobile,
           email: matchedPandit.email,
-          role: matchedPandit.role
+          role: matchedPandit.role,
+          form: matchedPandit.form,
+          verified: matchedPandit.verified,
+          rejected: matchedPandit.rejected,
         }
       });
     }
@@ -811,11 +951,11 @@ const formatUserImage = (img) => {
 };
 
 exports.update = async (req, res) => {
-  const id = req.params.id || req.params.userId || req.user?.id;
+  const requestedId = req.params.id || req.params.userId;
+  const authenticatedUserId = req.user?.id;
+  const id = authenticatedUserId || requestedId;
   const {
     name,
-    email,
-    mobile,
     city,
     country,
     address,
@@ -827,9 +967,19 @@ exports.update = async (req, res) => {
 
   try {
     if (!id) {
-      return res.status(400).send({
+      return res.status(401).send({
         success: false,
-        message: "User ID is required",
+        message: "Unauthorized access",
+      });
+    }
+    if (
+      requestedId &&
+      authenticatedUserId &&
+      Number(requestedId) !== Number(authenticatedUserId)
+    ) {
+      return res.status(403).send({
+        success: false,
+        message: "You can only update your own profile",
       });
     }
 
@@ -851,8 +1001,8 @@ exports.update = async (req, res) => {
     // 🔹 Preserve Old Values If New Value Is Undefined
     const updatedData = {
       name: name !== undefined ? name : existingUser.name,
-      email: email !== undefined ? email : existingUser.email,
-      mobile: mobile !== undefined ? mobile : existingUser.mobile,
+      email: existingUser.email,
+      mobile: existingUser.mobile,
       city: city !== undefined ? city : existingUser.city,
       country: country !== undefined ? country : existingUser.country,
       address: address !== undefined ? address : existingUser.address,
@@ -1207,6 +1357,8 @@ exports.getUserByToken = async (req, res) => {
       postalCode: rawUser.postalCode || "",
       country: rawUser.country || "India",
       role: rawUser.role,
+      email_verified: Number(rawUser.email_verified) === 1 ? 1 : 0,
+      mobile_verified: Number(rawUser.mobile_verified) === 1 ? 1 : 0,
       uuid: rawUser.uuid,
       created_at: rawUser.created_at,
     };

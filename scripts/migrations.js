@@ -4,6 +4,27 @@ async function runMigrations() {
   console.log("=== RUNNING DATABASE MIGRATIONS ===");
 
   try {
+    // Track which contact method was verified by the most recent login OTP.
+    try {
+      const [userCols] = await db.query("SHOW COLUMNS FROM users");
+      const userColNames = userCols.map(c => c.Field.toLowerCase());
+      const verificationColumns = [
+        { name: "email_verified", def: "TINYINT(1) NOT NULL DEFAULT 0" },
+        { name: "mobile_verified", def: "TINYINT(1) NOT NULL DEFAULT 0" },
+        { name: "otp_channel", def: "VARCHAR(10) DEFAULT NULL" },
+        { name: "otp_target", def: "VARCHAR(255) DEFAULT NULL" },
+      ];
+
+      for (const col of verificationColumns) {
+        if (!userColNames.includes(col.name)) {
+          await db.query(`ALTER TABLE users ADD COLUMN ${col.name} ${col.def}`);
+          console.log(`✓ Added column ${col.name} to users`);
+        }
+      }
+    } catch (userVerificationErr) {
+      console.warn("Note on users verification columns:", userVerificationErr.message);
+    }
+
     // 1. Create order_return table if not exists
     const createOrderReturnTable = `
       CREATE TABLE IF NOT EXISTS order_return (
@@ -790,6 +811,49 @@ async function runMigrations() {
       console.log("✅ Table 'email_otp_verifications' verified/created successfully.");
     } catch (otpErr) {
       console.warn("Note on email_otp_verifications table migration:", otpErr.message);
+    }
+
+    // 16. Create user_activity_logs table for User Journey, Page Views, Scroll, & Audit Logs
+    try {
+      const createUserActivityLogsTable = `
+        CREATE TABLE IF NOT EXISTS user_activity_logs (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NULL,
+          user_type VARCHAR(50) DEFAULT 'guest',
+          session_id VARCHAR(100) NOT NULL,
+          event_type VARCHAR(50) NOT NULL,
+          page_url VARCHAR(500) NOT NULL,
+          page_title VARCHAR(255) DEFAULT NULL,
+          page_image VARCHAR(500) DEFAULT NULL,
+          action_name VARCHAR(100) DEFAULT NULL,
+          target_id VARCHAR(100) DEFAULT NULL,
+          scroll_depth SMALLINT DEFAULT 0,
+          time_spent_seconds INT DEFAULT 0,
+          referrer_url VARCHAR(500) DEFAULT NULL,
+          device_type VARCHAR(50) DEFAULT 'Desktop',
+          browser VARCHAR(100) DEFAULT NULL,
+          ip_address VARCHAR(50) DEFAULT NULL,
+          user_agent VARCHAR(500) DEFAULT NULL,
+          metadata JSON DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_user_created (user_id, created_at),
+          INDEX idx_session_created (session_id, created_at),
+          INDEX idx_event_type (event_type),
+          INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+      await db.query(createUserActivityLogsTable);
+      
+      // Ensure user_type is VARCHAR(50) if table was previously created with ENUM
+      try {
+        await db.query("ALTER TABLE user_activity_logs MODIFY COLUMN user_type VARCHAR(50) DEFAULT 'guest'");
+      } catch (alterColErr) {
+        // Column may already be varchar
+      }
+      
+      console.log("✅ Table 'user_activity_logs' verified/created successfully.");
+    } catch (actLogErr) {
+      console.warn("Note on user_activity_logs table migration:", actLogErr.message);
     }
 
     console.log("=== MIGRATIONS COMPLETE ===");

@@ -12,7 +12,7 @@ const app = express();
 const server = http.createServer(app);
 
 const securityHeaders = require("./middlewares/securityHeaders");
-const { authLimiter, generalLimiter } = require("./middlewares/rateLimiter");
+const { authLimiter, generalLimiter, translationLimiter } = require("./middlewares/rateLimiter");
 const { initializeSocket } = require("./config/soketConfig");
 const passport = require('passport');
 const session = require('express-session');
@@ -86,6 +86,7 @@ app.use(bodyParser.urlencoded({ extended: true, limit: "50mb" }));
 app.use(morgan("dev"));
 app.use(express.json({ limit: "50mb" }));
 
+app.use("/api/v1/translation", translationLimiter, require("./Routes/translationRoutes"));
 app.use("/api/v1/auth", authLimiter, require("./Routes/customerRoutes"));
 app.use("/api/v1/users", require("./Routes/customerRoutes"));
 app.use("/api/v1/pandit", require("./Routes/panditRoutes"));
@@ -131,6 +132,8 @@ app.use("/api/v1/rudraAbhishek",require('./Routes/rudraAbhishekRoutes'));
 app.use("/api/v1/events", require('./Routes/eventRoutes'));
 app.use("/api/v1/settings", require('./Routes/settingRoutes'));
 app.use("/api/v1/sankalp", require('./Routes/sankalpRoutes'));
+app.use("/api/v1/activity-logs", require("./Routes/activityLogRoutes"));
+app.use("/api/v1/logs", require("./Routes/activityLogRoutes"));
 
 // Unprefixed route aliases for direct endpoints
 app.use("/users", require("./Routes/customerRoutes"));
@@ -186,6 +189,16 @@ mysqlpool.query("SELECT 1").then(async () => {
   } catch (tErr) {
     console.warn("Database sync init warning:", tErr.message);
   }
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`\n❌ [Port Error] Port ${port} is already in use by another process.`);
+      console.error(`💡 Solution: Change PORT in your .env file (e.g., PORT=${port + 1}) or terminate the process using port ${port}.\n`);
+    } else {
+      console.error("❌ [Server Error]:", error);
+    }
+    process.exit(1);
+  });
+
   server.listen(port, IP, () => {
     console.log(`App is running on port ${port} and IP ${IP}`);
   });

@@ -55,6 +55,47 @@ exports.getSellersCoupon = async (req, res) => {
   }
 };
 
+exports.getFirstOrderCoupons = async (req, res) => {
+  const userId = req.user?.id || req.query.userId || null;
+
+  try {
+    if (userId) {
+      const [orders] = await db.query(
+        `SELECT id FROM orders WHERE userId = ? LIMIT 1`,
+        [userId]
+      );
+
+      if (orders.length > 0) {
+        return res.status(200).json({
+          success: true,
+          isFirstOrder: false,
+          coupons: [],
+          message: "User has already placed an order.",
+        });
+      }
+    }
+
+    const [coupons] = await db.query(
+      `SELECT id, code, discount_type, discount_value, expiry_date
+       FROM productCoupons
+       WHERE expiry_date IS NULL OR expiry_date >= CURDATE()
+       ORDER BY created_at DESC`
+    );
+
+    return res.status(200).json({
+      success: true,
+      isFirstOrder: true,
+      coupons,
+    });
+  } catch (err) {
+    console.error("Database error in getFirstOrderCoupons:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Could not load first-order coupons.",
+    });
+  }
+};
+
 exports.getValidateCoupon = async (req, res) => {
   let { code } = req.params;
 

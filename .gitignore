@@ -25,6 +25,10 @@ serviceAccountKey.json
 invoices/*.pdf
 uploads/*
 !uploads/.gitkeep
+*.pdf
+*Report*.html
+generate_*report*.js
+send_all_test_emails.js
 
 # misc
 .DS_Store

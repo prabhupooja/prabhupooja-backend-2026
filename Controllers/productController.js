@@ -116,6 +116,9 @@ const formatProductResponse = (p) => {
     mrpPrice: mrp,
     offerPrice: offer,
     sellingPrice: offer,
+    saving: mrp > offer ? parseFloat((mrp - offer).toFixed(2)) : 0,
+    savingAmount: mrp > offer ? parseFloat((mrp - offer).toFixed(2)) : 0,
+    save_amount: mrp > offer ? parseFloat((mrp - offer).toFixed(2)) : 0,
     discountPercentage: discountPercent,
     discount_percent: discountPercent,
     stock: stockQty,
@@ -197,6 +200,8 @@ const formatProductResponse = (p) => {
     return_available: p.return_available !== undefined && p.return_available !== null ? Boolean(p.return_available) : true,
     replacement_available: p.replacement_available !== undefined && p.replacement_available !== null ? Boolean(p.replacement_available) : true,
     replacement_period: p.replacement_period || 7,
+    return_policy_note: p.return_policy_note || "Returns or replacements are accepted only for damaged, defective or incorrect items and must be raised within 7 days of delivery. An unboxing video is mandatory for return or replacement requests.",
+    returnPolicyNote: p.return_policy_note || "Returns or replacements are accepted only for damaged, defective or incorrect items and must be raised within 7 days of delivery. An unboxing video is mandatory for return or replacement requests.",
 
     // 7. SEO
     seo_title: p.seo_title || p.productName,

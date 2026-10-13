@@ -1,11 +1,13 @@
 const express=require('express');
 const router= express.Router();
 const productCouponsController = require("../Controllers/productCouponController");
-const {AdminverifyToken} = require("../config/admintoken");
+const { AdminverifyToken } = require("../config/admintoken");
 const { sellerVerifyToken } = require('../config/sellerToken');
+const { verifyToken, optionalVerifyToken } = require("../config/genratetokenConfig");
 
-router.post('/create',AdminverifyToken,productCouponsController.createCoupon);
-router.post('/createSeller',sellerVerifyToken,productCouponsController.createCoupon);
+router.post('/create', AdminverifyToken, productCouponsController.createCoupon);
+router.post('/createSeller', sellerVerifyToken, productCouponsController.createCoupon);
+router.get('/first-order', optionalVerifyToken, productCouponsController.getFirstOrderCoupons);
 router.get('/get', sellerVerifyToken, productCouponsController.getSellersCoupon);
 router.get('/get/:sellerId',productCouponsController.getSellersCoupon);
 router.get('/getValidat-coupon/:code',productCouponsController.getValidateCoupon);

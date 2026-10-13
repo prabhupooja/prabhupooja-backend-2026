@@ -13,6 +13,7 @@ const {
 const {
   sendNotificationToUser,
 } = require("../Controllers/MobilePushNotification");
+const { recordAgentAuditLog } = require("../utils/auditLogger");
 
 
 const formatSingleProductImage = (img) => {
@@ -1748,6 +1749,16 @@ exports.CancelOrder = async (req, res) => {
       [JSON.stringify(statusArray), "error", orderId]
     );
 
+    recordAgentAuditLog({
+      agentId: req.user?.id || 0,
+      agentName: req.user?.name || (req.user?.role || "user"),
+      action: "CANCEL_ORDER",
+      targetType: "order",
+      targetId: orderId,
+      details: { cancelReason },
+      ipAddress: req.ip || req.socket?.remoteAddress,
+    });
+
     return res.status(200).send({
       success: true,
       message: "Order cancelled successfully",
@@ -2054,6 +2065,24 @@ exports.statusUpdate = async (req, res) => {
       }
     } catch (nErr) {
       console.warn("Notification notice:", nErr.message);
+    }
+
+    if (req.user) {
+      recordAgentAuditLog({
+        agentId: req.user.id || 0,
+        agentName: req.user.name || (req.user.role === "admin" ? "Admin" : "Agent"),
+        action: "UPDATE_ORDER_STATUS",
+        targetType: "order",
+        targetId: orderId,
+        details: {
+          previousStatus: currentOrder.order_status,
+          newStatus: resolvedOrderStatus,
+          progressStatus: resolvedProgressStatus,
+          courier: finalCourier || null,
+          trackingNumber: finalTrackingNum || null,
+        },
+        ipAddress: req.ip || req.socket?.remoteAddress,
+      });
     }
 
     return res.status(200).json({
@@ -2382,6 +2411,25 @@ exports.updateReturnStatusByAdmin = async (req, res) => {
       try {
         await sendNotification(sellerId, `Order #${retRecord.order_id} ${retRecord.request_type} status was updated to ${status} by Admin.`);
       } catch (sErr) {}
+    }
+
+    if (req.user) {
+      recordAgentAuditLog({
+        agentId: req.user.id || 0,
+        agentName: req.user.name || (req.user.role === "admin" ? "Admin" : "Agent"),
+        action: "UPDATE_RETURN_STATUS",
+        targetType: "order_return",
+        targetId: retRecord.id,
+        details: {
+          orderId: retRecord.order_id,
+          previousStatus: prevStatus,
+          newStatus: newStatusLower,
+          remarks: resolvedRemarks,
+          transactionReference: resolvedRef,
+          replacementTrackingId: resolvedTracking,
+        },
+        ipAddress: req.ip || req.socket?.remoteAddress,
+      });
     }
 
     return res.status(200).json({
