@@ -99,6 +99,40 @@ async function runMigrations() {
       console.warn("Note on orders table columns:", oErr.message);
     }
 
+    // Ensure puja table has required columns for Online Pooja
+    try {
+      const [pujaCols] = await db.query("SHOW COLUMNS FROM puja");
+      const pujaColNames = pujaCols.map(c => c.Field.toLowerCase());
+      const pujaFieldsToAdd = [
+        { name: "about_samagri", def: "LONGTEXT DEFAULT NULL" },
+        { name: "benefits", def: "LONGTEXT DEFAULT NULL" },
+        { name: "how_it_happens", def: "LONGTEXT DEFAULT NULL" },
+        { name: "about_pooja", def: "LONGTEXT DEFAULT NULL" },
+        { name: "after_pooja", def: "LONGTEXT DEFAULT NULL" },
+        { name: "pooja_date", def: "VARCHAR(100) DEFAULT NULL" },
+        { name: "pooja_time", def: "VARCHAR(100) DEFAULT NULL" },
+        { name: "countdown_datetime", def: "VARCHAR(100) DEFAULT NULL" },
+      ];
+
+      for (const field of pujaFieldsToAdd) {
+        if (!pujaColNames.includes(field.name.toLowerCase())) {
+          await db.query(`ALTER TABLE puja ADD COLUMN ${field.name} ${field.def}`);
+          console.log(`✅ Added '${field.name}' column to 'puja' table.`);
+        }
+      }
+
+      // Ensure image is TEXT
+      await db.query("ALTER TABLE puja MODIFY COLUMN image TEXT DEFAULT NULL");
+      // Ensure pandit_id can store multiple pandits as comma-separated string
+      const panditIdCol = pujaCols.find(c => c.Field.toLowerCase() === 'pandit_id');
+      if (panditIdCol && panditIdCol.Type.toLowerCase().startsWith('int')) {
+        await db.query("ALTER TABLE puja MODIFY COLUMN pandit_id VARCHAR(255) DEFAULT NULL");
+        console.log("✅ Modified 'pandit_id' in 'puja' table to VARCHAR(255).");
+      }
+    } catch (pujaErr) {
+      console.warn("Note on puja table columns:", pujaErr.message);
+    }
+
     // 2. Create event_bookings table if not exists
     const createEventBookingsTable = `
       CREATE TABLE IF NOT EXISTS event_bookings (

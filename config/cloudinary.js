@@ -27,7 +27,7 @@ const createCloudinaryUpload = (folderName = 'general', allowedFormats = ['jpg',
       public_id: (req, file) => {
         const cleanName = (file.originalname || 'file')
           .replace(/[^a-zA-Z0-9.-]/g, '_')
-          .replace(/\.[^/.]+$/, '');
+          .replace(/\.[^/.]+$/, '').substring(0, 40);
         return `${Date.now()}-${cleanName}`;
       },
     },

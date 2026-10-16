@@ -107,6 +107,8 @@ app.use("/api/v1/orders", require("./Routes/orderRoutes"));
 app.use("/api/v1/cart", require("./Routes/cartRoutes"));
 app.use('/api/v1/admin', require('./Routes/adminRoutes'));
 app.use("/api/v1/enquiry", require('./Routes/enquiryRoutes'));
+app.use("/api/v1/spiritual-enquiry", require("./Routes/spiritualEnquiryRoutes"));
+app.use("/api/v1/karmic-enquiry", require("./Routes/spiritualEnquiryRoutes"));
 app.use('/api/v1/temple', require('./Routes/templeRoutes'));
 app.use('/api/v1/feedback', require('./Routes/feedbackRoutes'));
 app.use('/api/v1/pooja', require('./Routes/bookpoojaRoutes'));

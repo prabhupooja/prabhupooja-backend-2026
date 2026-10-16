@@ -3,7 +3,7 @@ const db = require("../config/db");
 
 exports.create = async (req, res) => {
   const { name } = req.body;
-  const image = req.file.location; 
+  const image = req.file ? req.file.location : (req.body.image && typeof req.body.image === "string" ? req.body.image : null); 
 
   if (!image) {
     return res.status(400).send({
@@ -113,8 +113,8 @@ exports.update = async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
 
-  // multer-s3 provides `location`
-  const image = req.file ? req.file.location : null;
+  // multer provides `location` (Cloudinary/S3) or fallback to body URL
+  const image = req.file ? req.file.location : (req.body.image && typeof req.body.image === "string" && req.body.image.startsWith("http") ? req.body.image : null);
 
   try {
     // Fetch existing service

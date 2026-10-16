@@ -3,7 +3,7 @@ const { getCache, setCache, deleteCache } = require("../config/redis");
 
 exports.create = async (req, res) => {
     const { name } = req.body;
-    const image = req.file ? req.file.location  : null;
+    const image = req.file ? (req.file.location || req.file.path) : (req.body.image || null);
 
     try {
         const [result] = await db.query(
@@ -113,7 +113,7 @@ exports.getById = async (req, res) => {
 exports.update = async (req, res) => {
     const { id } = req.params;
     const { name } = req.body;
-    const image = req.file ? req.file.location || req.file.path : null;
+    const image = req.file ? (req.file.location || req.file.path) : (req.body.image && typeof req.body.image === 'string' && req.body.image.startsWith('http') ? req.body.image : null);
 
     try {
         // Check if category exists

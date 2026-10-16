@@ -62,7 +62,7 @@ exports.create = async (req, res) => {
     after_pooja, pooja_date, pooja_time, countdown_datetime 
   } = req.body;
   
-  const image = req.file ? req.file.location : null;
+  const image = req.file ? req.file.location : (req.body.image && typeof req.body.image === 'string' ? req.body.image : null);
 
   if (!image) {
     return res.status(400).send({
@@ -350,7 +350,7 @@ exports.updatePuja = async (req, res) => {
     about_samagri, benefits, how_it_happens, about_pooja, 
     after_pooja, pooja_date, pooja_time, countdown_datetime 
   } = req.body;
-  const image = req.file ? req.file.location : null;
+  const image = req.file ? req.file.location : (req.body.image && typeof req.body.image === 'string' && req.body.image.startsWith('http') ? req.body.image : null);
 
   if (!id) {
     return res.status(400).send({
@@ -458,10 +458,13 @@ exports.updatePuja = async (req, res) => {
     const [result] = await db.query(query, values);
 
     if (result.affectedRows === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "Puja not found or no update made",
-      });
+      const [chk] = await db.query('SELECT id FROM puja WHERE id = ?', [id]);
+      if (!chk || chk.length === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Puja not found",
+        });
+      }
     }
 
     // Invalidate puja cache
